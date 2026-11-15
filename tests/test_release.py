@@ -211,7 +211,7 @@ class ReleaseTests(unittest.TestCase):
         with patch.dict(os.environ, {'VITE_HOST_SECRET':'private', 'NODE_OPTIONS':'--require local.js',
                                      'NODE_PATH':'/host/modules'}), patch.object(builder.subprocess, 'run') as run:
             builder._run(['npm', 'run', 'build'], self.source)
-        environment = run.call_args.kwargs['env']
+        environment = run.call_args[1]['env']
         for name in ('VITE_HOST_SECRET', 'NODE_OPTIONS', 'NODE_PATH'):
             self.assertNotIn(name, environment)
         self.assertEqual(environment['NODE_ENV'], 'production')
