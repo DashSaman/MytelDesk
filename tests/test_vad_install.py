@@ -132,8 +132,44 @@ class VadInstallTests(unittest.TestCase):
         self.python_present = False
         self.provision()
         commands = [a for a, _ in self.calls if a[0] == 'dnf']
-        self.assertEqual(commands, [['dnf', '-y', 'install', 'python3.11', 'python3.11-pip']])
+        self.assertEqual(len(commands), 1)
+        self.assertEqual(commands[0][-3:], ['install', 'python3.11', 'python3.11-pip'])
         self.assertFalse(any('alternatives' in a or 'python' in a[1:2] for a, _ in self.calls))
+
+    def test_unrelated_broken_repo_cannot_block_parallel_python_install(self):
+        self.python_present = False
+        original_run = self.run_command
+        observed = []
+        def broken_extra_repo(argv, **kwargs):
+            if argv[0] == 'dnf':
+                observed.append((argv, kwargs))
+                selected = [arg for arg in argv if arg.startswith('--enablerepo=')]
+                if '--disablerepo=*' not in argv or selected != ['--enablerepo=baseos', '--enablerepo=appstream']:
+                    return SimpleNamespace(returncode=1, stdout='', stderr='Private unrelated repository metadata connection refused')
+            return original_run(argv, **kwargs)
+        environment = vad.ensure_vad(self.bundle, self.runtime, broken_extra_repo, self.fetch)
+        self.assertTrue(Path(environment['VAD_PYTHON']).is_file())
+        self.assertEqual(len(observed), 1)
+        argv, options = observed[0]
+        self.assertIn('--setopt=timeout=30', argv)
+        self.assertIn('--setopt=retries=2', argv)
+        self.assertLessEqual(options['timeout'], 900)
+        self.assertEqual(argv[-3:], ['install', 'python3.11', 'python3.11-pip'])
+        self.assertFalse(any('config-manager' in args or 'upgrade' in args for args, _ in self.calls))
+
+    def test_required_rocky_repo_failure_has_bounded_sanitized_guidance(self):
+        self.python_present = False
+        original_run = self.run_command
+        def unavailable_base_repo(argv, **kwargs):
+            if argv[0] == 'dnf':
+                return SimpleNamespace(returncode=1, stdout='', stderr='Private repository endpoint and diagnostic details')
+            return original_run(argv, **kwargs)
+        with self.assertRaisesRegex(RuntimeError, 'Rocky BaseOS/AppStream') as failure:
+            vad.ensure_vad(self.bundle, self.runtime, unavailable_base_repo, self.fetch)
+        self.assertNotIn('Private', str(failure.exception))
+        self.assertFalse(any('venv' in argv or '--doctor' in argv for argv, _ in self.calls))
+        marker = next(self.runtime.rglob('.myteldesk-vad.json'))
+        self.assertEqual(json.loads(marker.read_text())['status'], 'building')
 
     def test_wrong_interpreter_version_is_not_reported_as_ready(self):
         self.python_version = 'Python 3.12.0\n'
