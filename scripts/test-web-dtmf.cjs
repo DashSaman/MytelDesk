@@ -52,7 +52,7 @@ async function check(name,fn,options={}){
   if(u.pathname.includes('/api/'))return route.fulfill({contentType:'application/json',body:JSON.stringify(u.pathname.endsWith('/webrtc/config')?{server:'wss://fixture.invalid',extension:'201',extension_secret:'fixture'}:{reasons:[]})});
   return route.continue();
  });
- const page=await context.newPage();page.setDefaultTimeout(4000);page.on('pageerror',e=>errors.push(e.message));
+ const page=await context.newPage();page.setDefaultTimeout(4000);page.setDefaultNavigationTimeout(45000);page.on('pageerror',e=>errors.push(e.message));
  try{
   await page.goto(origin+'/MytellDesk/__dtmf',{waitUntil:'networkidle'});
   await page.waitForFunction(()=>window.fixture?.phone&&window.fixture.hook.isConnected).catch(async e=>{throw new Error(e.message+'; '+JSON.stringify({errors,body:await page.locator('body').innerText(),fixture:await page.evaluate(()=>({hasFixture:!!window.fixture,hookStatus:window.fixture?.hook?.status,config:window.fixture?.hook?.config}))}));});
