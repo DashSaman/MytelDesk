@@ -27,7 +27,7 @@ index; unfinished checks below are not release approval.
 
 | Behavior | Executed target | RED | GREEN |
 |---|---|---|---|
-| Empty or legacy WebRTC server settings retain the installed URL prefix; a configured public port appears once | `npm test -- --runInBand softphone-routes` | 3 failed, 37 passed; runtime assertions reproduce the wrong paths/duplicate ports | Pending |
+| Empty or legacy WebRTC server settings retain the installed URL prefix; a configured public port appears once | `npm test -- --runInBand softphone-routes` | 3 failed, 37 passed; runtime assertions reproduce the wrong paths/duplicate ports | 40 passed; stored custom URLs and legacy deployments remain covered |
 
 The initial reproducer is on the active development branch at `d25f6b2`.
 Operational evidence stays private when it contains host identifiers or call data.

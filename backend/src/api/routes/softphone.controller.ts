@@ -86,7 +86,9 @@ export async function webrtcServerUrl(req: Request): Promise<string> {
     // A Host header without a port (older Nginx config forwarding $host) means the default
     // port was assumed; add Nginx's real one so the URL doesn't land on another site's 443.
     if (host && !/:\d+$/.test(host)) host += publicPortSuffix();
-    server = host ? `wss://${host}/sip-ws` : stored;
+    const configuredBase = env('OPDESK_BASE_PATH', '').trim().replace(/\/+$/, '');
+    const base = /^\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*$/.test(configuredBase) ? configuredBase : '';
+    server = host ? `wss://${host}${base}/sip-ws` : stored;
   } else {
     server = stored;
   }
@@ -98,7 +100,7 @@ export async function webrtcServerUrl(req: Request): Promise<string> {
   const domain = env('OPDESK_DOMAIN', '').trim();
   if (domain && server) {
     const m = /^(wss?:\/\/)\d{1,3}(?:\.\d{1,3}){3}(:\d+)?(\/.*)?$/.exec(server);
-    if (m) server = `${m[1]}${domain}${m[2] || ''}${m[3] || '/sip-ws'}`;
+    if (m) server = `${m[1]}${domain}${/:\d+$/.test(domain) ? '' : m[2] || ''}${m[3] || '/sip-ws'}`;
   }
   return server;
 }
