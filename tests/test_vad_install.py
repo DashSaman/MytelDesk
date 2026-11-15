@@ -4,6 +4,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import stat
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
@@ -50,6 +51,18 @@ class VadInstallTests(unittest.TestCase):
         patcher = mock.patch.object(os, 'chown', create=True)
         self.chown = patcher.start()
         self.addCleanup(patcher.stop)
+        # Windows does not expose POSIX ownership or group-write semantics. Keep
+        # those metadata checks deterministic here; Linux runs the real lstat.
+        if os.name == 'nt':
+            real_lstat = Path.lstat
+            def posix_lstat(path):
+                value = real_lstat(path)
+                if str(path).startswith(str(self.base)):
+                    fields = list(value); fields[0] &= ~0o022; fields[4] = 0
+                    return os.stat_result(fields)
+                return value
+            patcher = mock.patch.object(Path, 'lstat', posix_lstat)
+            patcher.start(); self.addCleanup(patcher.stop)
 
     def write_manifest(self):
         (self.sources / 'runtime.json').write_text(json.dumps(self.manifest, sort_keys=True) + '\n')
@@ -300,6 +313,43 @@ class VadInstallTests(unittest.TestCase):
         try: self.runtime.symlink_to(outside, target_is_directory=True)
         except OSError as error: self.skipTest('Native symlink privilege unavailable: ' + str(error))
         with self.assertRaises(ValueError): self.provision()
+        self.assertEqual(self.calls, [])
+
+    def test_existing_runtime_ownership_or_write_access_is_not_adopted(self):
+        self.provision()
+        marker = next(self.runtime.rglob('.myteldesk-vad.json'))
+        wheel = next(self.runtime.rglob('*.whl'))
+        real_lstat = Path.lstat
+        for target in (self.runtime, marker.parent, marker, wheel):
+            for weakness in ('owner', 'group-write', 'world-write'):
+                with self.subTest(path=target.name, weakness=weakness):
+                    def untrusted_lstat(path):
+                        value = real_lstat(path)
+                        if path == target:
+                            fields = list(value)
+                            if weakness == 'owner': fields[4] = 1001
+                            elif weakness == 'group-write': fields[0] |= stat.S_IWGRP
+                            else: fields[0] |= stat.S_IWOTH
+                            return os.stat_result(fields)
+                        return value
+                    self.calls[:] = []; self.chown.reset_mock()
+                    with mock.patch.object(Path, 'lstat', untrusted_lstat):
+                        with self.assertRaises(ValueError): self.provision()
+                    self.assertEqual(self.calls, [])
+                    self.chown.assert_not_called()
+
+    def test_untrusted_empty_runtime_root_is_rejected_before_creation_or_commands(self):
+        self.runtime.mkdir()
+        real_lstat = Path.lstat
+        def untrusted_lstat(path):
+            value = real_lstat(path)
+            if path == self.runtime:
+                fields = list(value); fields[4] = 1001
+                return os.stat_result(fields)
+            return value
+        with mock.patch.object(Path, 'lstat', untrusted_lstat):
+            with self.assertRaises(ValueError): self.provision()
+        self.assertEqual(list(self.runtime.iterdir()), [])
         self.assertEqual(self.calls, [])
 
 
