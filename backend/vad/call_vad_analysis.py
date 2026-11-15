@@ -16,7 +16,7 @@ Usage:
   vad/.venv/bin/python vad/call_vad_analysis.py --backend webrtc   # force fallback
   vad/.venv/bin/python vad/call_vad_analysis.py --serve            # backend worker (see serve())
 
-Requirements (vad/requirements.txt, installed into vad/.venv by install.sh):
+Requirements (vad/requirements.txt, installed into vad/.venv by a separately configured VAD virtual environment):
   numpy
   onnxruntime          # for Silero (recommended)
   webrtcvad-wheels     # for fallback (prebuilt wheels of webrtcvad; same `import webrtcvad`)

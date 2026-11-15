@@ -13,6 +13,7 @@ import os
 from pathlib import Path, PurePosixPath
 import re
 import shutil
+import signal
 import socket
 import ssl
 import stat
@@ -167,7 +168,7 @@ def atomic(path, data, mode=0o600, uid=0, gid=0):
 
 def read_state():
     if not STATE.exists(): return None
-    if STATE.is_symlink() or STATE.stat().st_mode & 0o077:
+    if STATE.is_symlink() or STATE.stat().st_uid != 0 or STATE.stat().st_mode & 0o077:
         raise RuntimeError('Installation ownership file must be root-private')
     state = json.loads(STATE.read_text(encoding='utf-8'))
     if state.get('owner') != 'MytelDesk' or state.get('schema') != 1:
@@ -193,10 +194,12 @@ class Transaction:
             info = path.stat(); backup = self.directory / str(len(self.entries))
             shutil.copyfile(str(path), str(backup)); backup.chmod(0o600)
             entry.update(before=str(backup), mode=stat.S_IMODE(info.st_mode), uid=info.st_uid, gid=info.st_gid)
-        atomic(path, data, mode, uid, gid)
-        entry['after'] = digest(path)
+        content = data.encode('utf-8') if isinstance(data, str) else data
+        entry['after'] = hashlib.sha256(content).hexdigest()
         self.entries.append(entry)
+        # Journal before replacing the target, so termination can be recovered.
         atomic(self.directory / 'journal.json', json.dumps(self.entries, indent=2))
+        atomic(path, content, mode, uid, gid)
 
     def rollback(self):
         restore_entries(self.entries)
@@ -205,12 +208,47 @@ class Transaction:
 def restore_entries(entries):
     for item in reversed(entries):
         path = Path(item['path'])
+        if not path.exists() and not item['before']: continue
+        if path.is_file() and item['before'] and digest(path) == digest(Path(item['before'])): continue
         if path.is_symlink() or not path.exists() or digest(path) != item['after']:
             raise RuntimeError('Configuration changed since install; automatic restore stopped')
         if item['before']:
             atomic(path, Path(item['before']).read_bytes(), item['mode'], item['uid'], item['gid'])
         else:
             path.unlink()
+
+
+def restore_current(target):
+    link = ROOT / 'current'
+    if link.exists() and not link.is_symlink(): raise RuntimeError('Current release pointer is not installer-owned')
+    temp = ROOT / '.current-restore'
+    if temp.is_symlink(): temp.unlink()
+    if target:
+        temp.symlink_to(target); os.replace(str(temp), str(link))
+    elif link.is_symlink(): link.unlink()
+
+
+def recover_pending(state):
+    directory = Path(state['pending_journal']).parent
+    journal = directory / 'journal.json'
+    previous = json.loads((directory / 'previous-state.json').read_text())
+    run(['systemctl', 'stop', 'myteldesk'], check=False)
+    restore_entries(json.loads(journal.read_text()) if journal.exists() else [])
+    restore_current(state.get('pending_current'))
+    save_state(previous)
+    run(['systemctl', 'daemon-reload'])
+    run(['asterisk', '-rx', 'manager reload'], check=False)
+    run(['httpd', '-t']); run(['systemctl', 'reload', 'httpd'])
+    if previous.get('status') == 'ready': run(['systemctl', 'start', 'myteldesk']); wait_health()
+    else: run(['systemctl', 'disable', 'myteldesk'], check=False)
+    print('Recovered the interrupted configuration transaction; application data and secrets retained.')
+    return previous
+
+
+def root_owned(path):
+    path = Path(path)
+    if path.is_symlink() or (path.exists() and (path.stat().st_uid != 0 or path.stat().st_mode & 0o022)):
+        raise RuntimeError('Installer code/config path must be root-owned and not group/world writable')
 
 
 def mysql(sql, password, database=None):
@@ -255,6 +293,8 @@ def ensure_runtime(bundle):
     pin = json.loads((bundle / 'installer/runtime.json').read_text())
     name = 'node-' + pin['version'] + '-linux-x64'
     runtime = ROOT / 'runtime' / name
+    for path in (ROOT, runtime.parent, runtime, runtime / 'bin', runtime / 'bin/node'):
+        root_owned(path)
     if not (runtime / 'bin/node').is_file():
         runtime.parent.mkdir(parents=True, exist_ok=True)
         runtime.parent.chmod(0o755)
@@ -364,12 +404,14 @@ def install(bundle, public_url=None):
     if not ami_enabled(ami_settings):
         raise RuntimeError('Enable local Asterisk AMI first in Issabel; its global listener is not changed automatically')
     state = read_state()
+    if state and state.get('pending_journal'):
+        state = recover_pending(state)
     if state and state.get('status') == 'ready':
         for path in (UNIT, PROXY, AMI, Path('/usr/local/sbin/myteldesk')):
             if path.is_symlink() or not path.is_file() or digest(path) != state.get('owned_hashes', {}).get(str(path)):
                 raise RuntimeError('Owned service/proxy/AMI configuration changed; reconcile it before upgrading')
     if not state:
-        for path in (Path('/opt/opdesk'), Path('/opt/OpDesk'), UNIT, PROXY, AMI, ENV):
+        for path in (Path('/opt/opdesk'), Path('/opt/OpDesk'), ROOT, CONFIG, DATA, UNIT, PROXY, AMI, ENV, Path('/usr/local/sbin/myteldesk')):
             if path.exists(): raise RuntimeError('Existing Desk installation/configuration detected; no settings changed. See migration documentation.')
         with socket.socket() as probe:
             if probe.connect_ex(('127.0.0.1', 8765)) == 0: raise RuntimeError('Backend port 8765 is already occupied')
@@ -380,6 +422,7 @@ def install(bundle, public_url=None):
         collisions = mysql("SELECT User FROM mysql.user WHERE User='myteldesk'; SHOW DATABASES LIKE 'myteldesk';", password)
         if collisions: raise RuntimeError('Database/account myteldesk already exists without installer ownership; refusing to reset it')
     for directory, mode in ((ROOT, 0o755), (CONFIG, 0o700), (DATA, 0o750)):
+        if directory != DATA: root_owned(directory)
         directory.mkdir(parents=True, exist_ok=True); directory.chmod(mode)
     os.chown(str(DATA), account.pw_uid, group.gr_gid)
     public_url = validate_public_url(public_url) if public_url else (state.get('public_url') if state else default_url())
@@ -397,6 +440,7 @@ def install(bundle, public_url=None):
     release = ROOT / 'releases' / (manifest['version'] + '-' + manifest['source_tree'][:12])
     release.parent.mkdir(exist_ok=True)
     release.parent.chmod(0o755)
+    root_owned(release.parent); root_owned(release)
     if release.exists(): verify_bundle(release)
     else:
         shutil.copytree(str(bundle), str(release))
@@ -436,6 +480,10 @@ def install(bundle, public_url=None):
     previous = dict(state)
     if previous.get('status') == 'ready': backup_database(password, transaction.directory)
     was_active = run(['systemctl', 'is-active', '--quiet', 'myteldesk'], check=False).returncode == 0
+    previous_current = os.readlink(str(ROOT / 'current')) if (ROOT / 'current').is_symlink() else None
+    atomic(transaction.directory / 'previous-state.json', json.dumps(previous))
+    state.update(pending_journal=str(transaction.directory / 'journal.json'), pending_current=previous_current)
+    save_state(state)
     try:
         progress(4, 'Adding isolated loopback-only AMI account')
         manager = Path('/etc/asterisk/manager.conf')
@@ -483,10 +531,13 @@ def install(bundle, public_url=None):
         if not state.get('uninstall_journal'):
             state['uninstall_journal'] = state['last_journal']
         state['owned_hashes'] = {entry['path']: entry['after'] for entry in transaction.entries}
+        state.pop('pending_journal', None); state.pop('pending_current', None)
         save_state(state)
-    except Exception:
+    except BaseException:
         run(['systemctl', 'stop', 'myteldesk'], check=False)
         transaction.rollback()
+        restore_current(previous_current)
+        save_state(previous)
         run(['systemctl', 'daemon-reload'], check=False)
         run(['asterisk', '-rx', 'manager reload'], check=False)
         run(['systemctl', 'reload', 'httpd'], check=False)
@@ -566,6 +617,8 @@ def main():
     parser.add_argument('--public-url', help='HTTPS address of this Issabel server')
     args = parser.parse_args()
     if os.name != 'posix' or os.geteuid() != 0: raise RuntimeError('Run this installer as root on the Issabel server')
+    def terminated(_signum, _frame): raise KeyboardInterrupt('Installer interrupted; configuration transaction will be restored')
+    signal.signal(signal.SIGTERM, terminated)
     import fcntl
     with open('/run/myteldesk-install.lock', 'w') as lock:
         try: fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)

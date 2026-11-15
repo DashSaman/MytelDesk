@@ -1,3 +1,5 @@
+> **Archived upstream installation reference.** These commands describe the original OpDesk/nginx deployment and do not apply to this MytelDesk Issabel distribution. Use the current [MytelDesk installation and recovery instructions](../../README.md). Do not run legacy `--no-pull` commands on an installer-managed server.
+
 # Installation and operations
 
 How to install OpDesk on an Issabel or FreePBX server, run it, and keep it up to date.
