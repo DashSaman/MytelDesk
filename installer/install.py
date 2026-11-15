@@ -206,14 +206,26 @@ class Transaction:
 
 
 def restore_entries(entries):
+    planned = []
     for item in reversed(entries):
         path = Path(item['path'])
-        if not path.exists() and not item['before']: continue
-        if path.is_file() and item['before'] and digest(path) == digest(Path(item['before'])): continue
-        if path.is_symlink() or not path.exists() or digest(path) != item['after']:
+        if path.is_symlink():
             raise RuntimeError('Configuration changed since install; automatic restore stopped')
+        if not path.exists() and not item['before']: continue
+        if not path.is_file():
+            raise RuntimeError('Configuration changed since install; automatic restore stopped')
+        current = digest(path)
+        if current != item['after'] and (not item['before'] or current != digest(Path(item['before']))):
+            raise RuntimeError('Configuration changed since install; automatic restore stopped')
+        planned.append((path, item))
+    # Validate the complete transaction before changing any entry. A shared-file
+    # conflict must not leave a half-restored service or remove unrelated files.
+    for path, item in planned:
         if item['before']:
-            atomic(path, Path(item['before']).read_bytes(), item['mode'], item['uid'], item['gid'])
+            if digest(path) == digest(Path(item['before'])):
+                os.chmod(str(path), item['mode']); os.chown(str(path), item['uid'], item['gid'])
+            else:
+                atomic(path, Path(item['before']).read_bytes(), item['mode'], item['uid'], item['gid'])
         else:
             path.unlink()
 
@@ -249,6 +261,15 @@ def root_owned(path):
     path = Path(path)
     if path.is_symlink() or (path.exists() and (path.stat().st_uid != 0 or path.stat().st_mode & 0o022)):
         raise RuntimeError('Installer code/config path must be root-owned and not group/world writable')
+
+
+def check_managed_files(state):
+    if not state.get('owned_hashes'):
+        raise RuntimeError('Managed configuration inventory is missing')
+    for name, expected in state['owned_hashes'].items():
+        path = Path(name)
+        if path.is_symlink() or not path.is_file() or digest(path) != expected:
+            raise RuntimeError('Managed configuration changed; reconcile shared include/service/proxy changes before upgrading')
 
 
 def mysql(sql, password, database=None):
@@ -407,9 +428,7 @@ def install(bundle, public_url=None):
     if state and state.get('pending_journal'):
         state = recover_pending(state)
     if state and state.get('status') == 'ready':
-        for path in (UNIT, PROXY, AMI, Path('/usr/local/sbin/myteldesk')):
-            if path.is_symlink() or not path.is_file() or digest(path) != state.get('owned_hashes', {}).get(str(path)):
-                raise RuntimeError('Owned service/proxy/AMI configuration changed; reconcile it before upgrading')
+        check_managed_files(state)
     if not state:
         for path in (Path('/opt/opdesk'), Path('/opt/OpDesk'), ROOT, CONFIG, DATA, UNIT, PROXY, AMI, ENV, Path('/usr/local/sbin/myteldesk')):
             if path.exists(): raise RuntimeError('Existing Desk installation/configuration detected; no settings changed. See migration documentation.')

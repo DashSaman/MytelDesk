@@ -13,6 +13,15 @@ mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 
 class InstallTests(unittest.TestCase):
+    def test_shared_config_edits_are_detected_before_upgrade(self):
+        with tempfile.TemporaryDirectory() as d:
+            path=Path(d)/'manager_custom.conf'; path.write_text('; original\n#include manager_myteldesk.conf\n')
+            state={'owned_hashes': {str(path): mod.digest(path)}}
+            mod.check_managed_files(state)
+            path.write_text(path.read_text()+'[another-account]\nsecret=preserved\n')
+            with self.assertRaises(RuntimeError): mod.check_managed_files(state)
+            self.assertIn('another-account',path.read_text())
+
     def test_real_ami_console_settings_format(self):
         self.assertTrue(mod.ami_enabled('Global Settings:\n  Manager (AMI):             Yes    \n  Web Manager (AMI/HTTP):    No\n'))
         self.assertFalse(mod.ami_enabled('Manager (AMI): No\nWeb Manager (AMI/HTTP): Yes\n'))
