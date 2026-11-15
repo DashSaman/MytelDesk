@@ -450,7 +450,7 @@ def install(bundle, public_url=None):
         for conf in Path('/etc/httpd/conf.d').glob('*.conf'):
             if '/MytellDesk' in conf.read_text(errors='replace'): raise RuntimeError('Product URL already owned by another Apache configuration')
     password = root_database_password()
-    if not state:
+    if not state or state.get('status') == 'preparing':
         collisions = mysql("SELECT User FROM mysql.user WHERE User='myteldesk'; SHOW DATABASES LIKE 'myteldesk';", password)
         if collisions: raise RuntimeError('Database/account myteldesk already exists without installer ownership; refusing to reset it')
     for directory, mode in ((ROOT, 0o755), (CONFIG, 0o700), (DATA, 0o750)):
@@ -460,8 +460,13 @@ def install(bundle, public_url=None):
     public_url = validate_public_url(public_url) if public_url else (state.get('public_url') if state else default_url())
     if state and public_url != state.get('public_url'):
         raise RuntimeError('Changing the public URL requires an explicit configuration migration; existing CORS/SIP settings were preserved')
-    if state and state.get('status') not in ('prepared', 'ready'):
+    if state and state.get('status') not in ('preparing', 'prepared', 'ready'):
         raise RuntimeError('Installation state requires manual recovery; retained identities will not be reset')
+    if not state:
+        # Establish ownership before any network-dependent runtime download. A
+        # failed first attempt can then resume without deleting trusted files.
+        state = dict(owner='MytelDesk', schema=1, status='preparing', public_url=public_url, platform=platform)
+        save_state(state)
     progress(2, 'Installing checksum-pinned private Node runtime')
     node = ensure_runtime(bundle)
     release = ROOT / 'releases' / (manifest['version'] + '-' + manifest['source_tree'][:12])
@@ -488,12 +493,18 @@ def install(bundle, public_url=None):
             return
     progress(4, 'Preparing dedicated secrets and database grants')
     admin_password = None
-    if state:
+    if state.get('status') != 'preparing':
         values = read_key_values(ENV)
     else:
         random_secret = lambda: base64.urlsafe_b64encode(os.urandom(36)).decode('ascii').rstrip('=')
         admin_password = random_secret()
-        values = dict(OS='Linux', PBX='Issabel', DB_HOST='127.0.0.1', DB_PORT='3306', DB_USER='myteldesk',
+        initial_admin = CONFIG / 'initial-admin.txt'
+        if initial_admin.exists():
+            password_line = next((line for line in initial_admin.read_text().splitlines() if line.startswith('Password: ')), None)
+            if not password_line:
+                raise RuntimeError('Initial administrator record is incomplete; restore its private backup')
+            admin_password = password_line.split(': ', 1)[1]
+        values = read_key_values(ENV) if ENV.exists() else dict(OS='Linux', PBX='Issabel', DB_HOST='127.0.0.1', DB_PORT='3306', DB_USER='myteldesk',
                       DB_PASSWORD=random_secret(), DB_NAME='asterisk', DB_CDR='asteriskcdrdb', DB_OpDesk='myteldesk',
                       AMI_HOST='127.0.0.1', AMI_PORT='5038', AMI_USERNAME='myteldesk', AMI_SECRET=random_secret(), AMI_CONTEXT='ext-local',
                       PORT='8765', OPDESK_BIND_HOST='127.0.0.1', OPDESK_BASE_PATH='/MytellDesk/',
@@ -505,14 +516,15 @@ def install(bundle, public_url=None):
         values.update(vad_environment)
         atomic(ENV, render_env(values), 0o640, 0, group.gr_gid)
         # EnvironmentFile is read by systemd, directory remains root-private.
-        state = dict(owner='MytelDesk', schema=1, status='prepared', public_url=public_url, platform=platform)
         hash_script = "const fs=require('fs'),b=require('bcryptjs');process.stdout.write(b.hashSync(fs.readFileSync(0,'utf8'),12));"
         admin_hash = run([str(node), '-e', hash_script], admin_password, env=dict(os.environ, NODE_PATH=str(release / 'backend/node_modules'))).stdout
         atomic(DATA / 'bootstrap-admin.hash', admin_hash + '\n', 0o600, account.pw_uid, group.gr_gid)
         secret_dir = DATA / 'secrets'; secret_dir.mkdir(mode=0o750, exist_ok=True)
         os.chown(str(secret_dir), account.pw_uid, group.gr_gid)
-        atomic(secret_dir / 'settings.key', base64.urlsafe_b64encode(os.urandom(32)) + b'\n', 0o600, account.pw_uid, group.gr_gid)
-        atomic(CONFIG / 'initial-admin.txt', 'URL: ' + public_url + '\nUsername: admin\nPassword: ' + admin_password + '\n')
+        if not (secret_dir / 'settings.key').exists():
+            atomic(secret_dir / 'settings.key', base64.urlsafe_b64encode(os.urandom(32)) + b'\n', 0o600, account.pw_uid, group.gr_gid)
+        atomic(initial_admin, 'URL: ' + public_url + '\nUsername: admin\nPassword: ' + admin_password + '\n')
+        state['status'] = 'prepared'
         save_state(state)
     mysql(database_sql(values['DB_PASSWORD']), password)
     transaction = Transaction()
