@@ -69,6 +69,28 @@ class VadInstallLifecycle(unittest.TestCase):
         for key,value in self.vad.items():self.assertEqual(values[key],value)
         self.assertNotIn('RECORDING_ENABLED',values)
 
+    def test_fresh_download_failure_can_be_retried_without_manual_directory_deletion(self):
+        self.provision.side_effect=[RuntimeError('temporary download failure'),self.vad]
+        with self.assertRaisesRegex(RuntimeError,'temporary download failure'):mod.install(self.bundle,'https://pbx.example')
+        self.assertFalse(self.env.exists())
+        mod.install(self.bundle,'https://pbx.example')
+        self.assertEqual(json.loads(self.state_file.read_text())['status'],'ready')
+
+    def test_bootstrap_failure_preserves_already_generated_connection_secrets_on_retry(self):
+        original_run=mod.run.side_effect
+        attempts=[0]
+        def fail_hash_once(argv,*args,**kwargs):
+            if '-e' in argv and attempts[0]==0:
+                attempts[0]+=1;raise RuntimeError('interrupted password hashing')
+            return original_run(argv,*args,**kwargs)
+        mod.run.side_effect=fail_hash_once
+        with self.assertRaisesRegex(RuntimeError,'interrupted password hashing'):mod.install(self.bundle,'https://pbx.example')
+        before=mod.read_key_values(self.env)
+        mod.install(self.bundle,'https://pbx.example')
+        after=mod.read_key_values(self.env)
+        for key in ('DB_PASSWORD','JWT_SECRET','AMI_SECRET','OPDESK_BRIDGE_PW'):
+            self.assertEqual(before[key],after[key])
+
     def test_upgrade_preserves_credentials_and_switches_vad_environment(self):
         self.existing();mod.install(self.bundle,'https://pbx.example')
         values=mod.read_key_values(self.env)
