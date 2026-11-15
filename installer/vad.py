@@ -64,10 +64,11 @@ def _load_spec(bundle):
         spec = json.loads(raw.decode('utf-8'))
     except (ValueError, UnicodeError):
         raise ValueError('VAD dependency manifest is invalid')
-    if spec.get('schema') != 1 or spec.get('python_version') != '3.11' or spec.get('architecture') != 'x86_64':
+    if (not isinstance(spec, dict) or spec.get('schema') != 1
+            or spec.get('python_version') != '3.11' or spec.get('architecture') != 'x86_64'):
         raise ValueError('Unsupported VAD runtime platform')
     model = spec.get('model', {})
-    if (model.get('filename') != 'silero_vad.onnx'
+    if (not isinstance(model, dict) or model.get('filename') != 'silero_vad.onnx'
             or not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', str(model.get('version', '')))
             or not re.fullmatch(r'[0-9a-f]{64}', str(model.get('sha256', '')))):
         raise ValueError('Invalid VAD model pin')
@@ -76,7 +77,8 @@ def _load_spec(bundle):
         raise ValueError('VAD dependency closure is invalid')
     names = set()
     for item in packages:
-        if not isinstance(item, dict) or item.get('name') not in PACKAGES or item['name'] in names:
+        if (not isinstance(item, dict) or not isinstance(item.get('name'), str)
+                or item['name'] not in PACKAGES or item['name'] in names):
             raise ValueError('VAD package is unsupported or duplicated')
         names.add(item['name'])
         if (not re.fullmatch(r'[0-9]+(?:\.[0-9]+)*(?:\.post[0-9]+)?', str(item.get('version', '')))
@@ -171,7 +173,7 @@ def ensure_vad(bundle, runtime_root, run, fetch_verified, service_user='asterisk
             marker = json.loads((generation / MARKER).read_text(encoding='utf-8'))
         except (OSError, ValueError):
             raise RuntimeError('Existing VAD generation has no valid ownership record')
-        if (marker.get('owner') != 'MytelDesk' or marker.get('schema') != 1
+        if (not isinstance(marker, dict) or marker.get('owner') != 'MytelDesk' or marker.get('schema') != 1
                 or marker.get('lock_sha256') != fingerprint or marker.get('status') not in ('ready', 'building')):
             raise RuntimeError('Existing VAD generation belongs to another installation')
         if marker['status'] == 'ready':
