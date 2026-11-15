@@ -92,3 +92,37 @@ test('aborted request remains distinguishable and is not retried',async()=>{
  const f=fixture(undefined,()=>{throw new DOMException('cancelled','AbortError');});
  await assert.rejects(f.api.api('/api/fixture'),e=>e.code==='client.request.aborted');assert.equal(f.requests.length,1);
 });
+
+for (const recordingPath of [
+ '/var/spool/asterisk/monitor/2026/11/15/call.wav',
+ '2026/11/15/call.wav',
+ '/var/spool/asterisk/monitor/تماس + #?%&= 100.wav',
+ 'literal%2Fname.wav',
+]) {
+ test('recording query survives an Apache encoded-slash boundary: '+recordingPath,async()=>{
+  const abort=new AbortController();
+  const f=fixture('src/auth.ts',(input)=>{
+   const url=new URL(String(input),origin);
+   // Apache rejects encoded path separators before proxying; query bytes are unaffected.
+   if(/%2f/i.test(url.pathname))return new Response('Apache Not Found',{status:404});
+   assert.equal(url.pathname,'/MytellDesk/api/recording-file');
+   assert.equal(url.searchParams.get('path'),recordingPath);
+   assert.deepEqual([...url.searchParams.keys()],['path']);
+   return new Response(new Uint8Array([82,73,70,70]),{headers:{'Content-Type':'audio/x-wav'}});
+  });
+  const blob=await f.api.fetchRecordingBlob(recordingPath,abort.signal);
+  try {
+   assert.match(blob,/^blob:/);assert.equal(f.requests.length,1);
+   assert.equal(new Headers(f.requests[0].init.headers).get('Authorization'),'Bearer fixture-token');
+   assert.equal(f.requests[0].init.signal,abort.signal);
+  } finally {URL.revokeObjectURL(blob);}
+ });
+}
+
+for(const status of [403,404]){
+ test('recording '+status+' remains an explicit failure without automatic retry',async()=>{
+  const f=fixture('src/auth.ts',()=>new Response('',{status}));
+  await assert.rejects(f.api.fetchRecordingBlob('call.wav'),e=>e.name==='RecordingFetchError'&&e.status===status);
+  assert.equal(f.requests.length,1);
+ });
+}
