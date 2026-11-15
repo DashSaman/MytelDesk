@@ -467,12 +467,24 @@ export class CallHistoryController {
    * root is 403 "Access denied", a missing file 404 "Recording not found", and a call
    * outside the caller's history scope 403 "Not allowed to view this call".
    */
+  @Get('/api/recording-file')
+  @Auth({ scope: 'cdr:read' })
+  async serveRecordingFileQuery(@Req() req: Request) {
+    // Apache may reject encoded slashes or merge the leading slash of an absolute
+    // wildcard path. A query preserves the original identity without proxy changes.
+    return this.recordingFile(req, qStr<string>(req.query as QueryParams, 'path', REQUIRED));
+  }
+
   @Get('/api/recordings/*file_path')
   @Auth({ scope: 'cdr:read' })
   async serveRecording(@Req() req: Request) {
     // Express 5 hands a named wildcard over as its decoded segments.
     const raw: unknown = req.params.file_path;
     const filePath = Array.isArray(raw) ? raw.join('/') : pStr(raw);
+    return this.recordingFile(req, filePath);
+  }
+
+  private async recordingFile(req: Request, filePath: string) {
     const resolved = await resolveRecordingRequest(filePath);
     if (resolved.status === 403) throw new HttpError(403, 'Access denied');
     if (resolved.status === 404 || !resolved.path) throw new HttpError(404, 'Recording not found');

@@ -4,7 +4,7 @@ import { fetchRecordingBlob, RecordingFetchError } from '../auth';
 /**
  * Object URLs for recordings, fetched with the Bearer header.
  *
- * `/api/recordings/...` does not accept a token in the query string, so an `<audio src>`
+ * The recording endpoint does not accept a token in the query string, so an `<audio src>`
  * or a download link cannot point at it directly. `load` fetches the file once per path,
  * retries once after a network failure, and hands back a blob URL. The hook owns that
  * URL: loading another path, `reset`, or unmounting revokes it, so a table of players

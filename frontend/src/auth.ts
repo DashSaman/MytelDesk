@@ -126,7 +126,7 @@ export class RecordingFetchError extends Error {
 /**
  * Fetch a recording with the Bearer header and return an object URL for it.
  *
- * `/api/recordings/...` does not take a token in the query string (a token in a URL
+ * The endpoint does not take a token in the query string (a token in a URL
  * ends up in access logs, browser history and copied links), so `<audio src>` and
  * download links point at a blob instead. The caller owns the URL and must
  * `URL.revokeObjectURL` it.
@@ -134,7 +134,9 @@ export class RecordingFetchError extends Error {
 export async function fetchRecordingBlob(path: string, signal?: AbortSignal): Promise<string> {
   let res: Response;
   try {
-    res = await fetchWithAuth(`/api/recordings/${encodeURIComponent(path)}`, { signal });
+    // A query preserves absolute paths through proxies that reject encoded slashes
+    // or merge repeated path separators. Authorization remains in the header.
+    res = await fetchWithAuth(`/api/recording-file?path=${encodeURIComponent(path)}`, { signal });
   } catch (e) {
     if (signal?.aborted) throw e;
     throw new RecordingFetchError(0);
