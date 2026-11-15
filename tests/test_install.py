@@ -29,7 +29,7 @@ class InstallTests(unittest.TestCase):
                     (unpack/'bin/node').write_bytes(b'fixture-node')
                     (unpack/'bin/node').chmod(0o700)
                 return SimpleNamespace(stdout='v24.22.3\n',returncode=0)
-            with mock.patch.object(mod,'ROOT',root), mock.patch.object(mod,'fetch_verified'), mock.patch.object(mod,'run',side_effect=fake_run), mock.patch.object(mod.os,'chown',create=True):
+            with mock.patch.object(mod,'ROOT',root), mock.patch.object(mod,'root_owned'), mock.patch.object(mod,'fetch_verified'), mock.patch.object(mod,'run',side_effect=fake_run), mock.patch.object(mod.os,'chown',create=True):
                 node=mod.ensure_runtime(bundle)
                 self.assertTrue(node.is_file())
                 if mod.os.name=='posix':
