@@ -15,8 +15,9 @@ Usage:
   vad/.venv/bin/python vad/call_vad_analysis.py --all --pretty
   vad/.venv/bin/python vad/call_vad_analysis.py --backend webrtc   # force fallback
   vad/.venv/bin/python vad/call_vad_analysis.py --serve            # backend worker (see serve())
+  vad/.venv/bin/python vad/call_vad_analysis.py --doctor           # offline CPU inference check
 
-Requirements (vad/requirements.txt, installed into vad/.venv by a separately configured VAD virtual environment):
+Requirements (vad/requirements.txt, provisioned by the installer in a private Python 3.11 environment):
   numpy
   onnxruntime          # for Silero (recommended)
   webrtcvad-wheels     # for fallback (prebuilt wheels of webrtcvad; same `import webrtcvad`)
@@ -25,21 +26,29 @@ The backend (src/services/vad-runner.ts) runs this file under the interpreter na
 VAD_PYTHON, else vad/.venv/bin/python, else python3.
 """
 
-# PEP 604/585 annotations (str | None, list[dict]) as strings, so the module also imports on
-# the Python 3.8/3.9 interpreters some PBX distributions ship.
+# Keep annotations unevaluated; the supported, pinned runtime is Python 3.11.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import importlib.metadata
 import json
 import logging
 import os
+import platform
 import re
 import struct
-import urllib.request
+import sys
 import wave
 from pathlib import Path
 
-import numpy as np
+# These limits affect this analysis process only, never the PBX or system runtime.
+for _thread_variable in ('OMP_NUM_THREADS', 'OPENBLAS_NUM_THREADS', 'MKL_NUM_THREADS', 'NUMEXPR_NUM_THREADS'):
+    os.environ[_thread_variable] = '1'
+try:
+    import numpy as np
+except (ImportError, OSError):
+    np = None  # --doctor must still return its bounded, sanitized JSON contract.
 
 log = logging.getLogger(__name__)
 
@@ -51,13 +60,9 @@ EXTS = (".wav", ".WAV")
 # ---------------------------------------------------------------------------
 SILERO_SAMPLE_RATE    = 16000
 SILERO_CHUNK_SAMPLES  = 512           # 32 ms at 16 kHz
+SILERO_CONTEXT_SAMPLES = 64          # preceding samples required by the upstream wrapper
 SILERO_ONSET          = 0.40          # prob must reach this to open a speech region
 SILERO_OFFSET         = 0.10          # prob must drop below this to close it
-SILERO_MODEL_URL      = (
-    "https://github.com/snakers4/silero-vad/raw/v5.1.2/"
-    "src/silero_vad/data/silero_vad.onnx"
-)
-SILERO_MODEL_CACHE   = Path(os.getenv("XDG_CACHE_HOME", Path.home() / ".cache")) / "opdesk" / "silero_vad.onnx"
 
 # ---------------------------------------------------------------------------
 # Shared post-processing settings
@@ -147,15 +152,53 @@ def merge_segments(raw_segs: list[tuple[float, float]],
 # Silero VAD (primary)
 # ---------------------------------------------------------------------------
 
+class VadRuntimeError(RuntimeError):
+    """A public, path-free failure code; integrity failures never trigger fallback."""
+    def __init__(self, code):
+        self.code = code
+        super().__init__(code)
+
+
+def _runtime_spec() -> dict:
+    try:
+        raw = Path(__file__).with_name('runtime.json').read_bytes()
+        if len(raw) > 128 * 1024:
+            raise ValueError('manifest too large')
+        spec = json.loads(raw)
+        model = spec['model']
+        if (spec['schema'] != 1 or spec['python_version'] != '3.11'
+                or model['filename'] != 'silero_vad.onnx'
+                or not re.fullmatch(r'[0-9a-f]{64}', model['sha256'])
+                or not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', model['version'])
+                or not isinstance(spec['packages'], list)):
+            raise ValueError('invalid manifest')
+        return spec
+    except (OSError, ValueError, KeyError, TypeError):
+        raise VadRuntimeError('invalid_configuration') from None
+
+
 def _ensure_silero_model() -> Path:
-    """Download the Silero ONNX model on first use; return its path."""
-    if SILERO_MODEL_CACHE.exists():
-        return SILERO_MODEL_CACHE
-    SILERO_MODEL_CACHE.parent.mkdir(parents=True, exist_ok=True)
-    log.info("Downloading Silero VAD model → %s", SILERO_MODEL_CACHE)
-    urllib.request.urlretrieve(SILERO_MODEL_URL, SILERO_MODEL_CACHE)
-    log.info("Silero VAD model downloaded (%.1f KB)", SILERO_MODEL_CACHE.stat().st_size / 1024)
-    return SILERO_MODEL_CACHE
+    """Verify the installed/bundled model; never download during a call or probe."""
+    model = _runtime_spec()['model']
+    configured_path = os.getenv('VAD_MODEL_PATH')
+    configured_hash = os.getenv('VAD_MODEL_SHA256')
+    if configured_path is not None or configured_hash is not None:
+        if not configured_path or configured_hash != model['sha256']:
+            raise VadRuntimeError('invalid_configuration')
+        path = Path(configured_path)
+        if not path.is_absolute() or '..' in path.parts:
+            raise VadRuntimeError('invalid_configuration')
+    else:
+        path = Path(__file__).resolve().parent / 'models' / model['filename']
+    try:
+        if not path.is_file() or path.stat().st_size > 10 * 1024 * 1024:
+            raise VadRuntimeError('model_missing')
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        raise VadRuntimeError('model_missing') from None
+    if digest != model['sha256']:
+        raise VadRuntimeError('model_hash_mismatch')
+    return path
 
 
 _SILERO_SESSION = None
@@ -165,18 +208,34 @@ def _silero_session():
     """One ONNX session per process: the --serve worker loads the model once, not per leg."""
     global _SILERO_SESSION
     if _SILERO_SESSION is None:
-        import onnxruntime as ort  # imported here so fallback still works without it
         model_path = str(_ensure_silero_model())
-        _SILERO_SESSION = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
+        import onnxruntime as ort  # imported here so explicit WebRTC use stays independent
+        options = ort.SessionOptions()
+        options.intra_op_num_threads = 1
+        options.inter_op_num_threads = 1
+        options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+        _SILERO_SESSION = ort.InferenceSession(model_path, sess_options=options, providers=["CPUExecutionProvider"])
     return _SILERO_SESSION
+
+
+def _silero_step(session, frame, state, context):
+    """The v6 wrapper prepends 64 samples to each 512-sample frame at 16 kHz."""
+    inp = np.concatenate((context, frame.reshape(1, -1)), axis=1).astype(np.float32, copy=False)
+    output, state = session.run(['output', 'stateN'],
+        {'input': inp, 'state': state, 'sr': np.array(SILERO_SAMPLE_RATE, dtype=np.int64)})
+    probability = float(output[0][0])
+    if (not np.isfinite(probability) or not 0.0 <= probability <= 1.0
+            or state.shape != (2, 1, 128) or not np.isfinite(state).all()):
+        raise VadRuntimeError('inference_failed')
+    return probability, state, inp[:, -SILERO_CONTEXT_SAMPLES:].copy()
 
 
 def silero_segments(samples: np.ndarray, sr: int,
                     onset: float = SILERO_ONSET,
                     offset: float = SILERO_OFFSET) -> list[tuple[float, float]]:
     """
-    Run Silero VAD v5 on float32 mono samples at `sr` Hz.
-    v5 model: inputs=(input, state, sr), outputs=(output, stateN).
+    Run the pinned Silero model on float32 mono samples at `sr` Hz.
+    Model: inputs=(input, state, sr), outputs=(output, stateN).
 
     Uses hysteresis (onset > offset) so momentary dips inside an utterance
     don't fragment a single word into multiple tiny segments.
@@ -189,7 +248,7 @@ def silero_segments(samples: np.ndarray, sr: int,
         samples = resample_f32(samples, sr, target_sr)
 
     state     = np.zeros((2, 1, 128), dtype=np.float32)
-    sr_tensor = np.array(target_sr, dtype=np.int64)
+    context   = np.zeros((1, SILERO_CONTEXT_SAMPLES), dtype=np.float32)
 
     segs: list[tuple[float, float]] = []
     in_speech = False
@@ -203,12 +262,7 @@ def silero_segments(samples: np.ndarray, sr: int,
             frame = np.pad(frame, (0, chunk - len(frame)))
         ts = off / target_sr
 
-        inp = frame.reshape(1, -1)
-        out, state = sess.run(
-            ["output", "stateN"],
-            {"input": inp, "state": state, "sr": sr_tensor},
-        )
-        prob = float(out[0][0])
+        prob, state, context = _silero_step(sess, frame, state, context)
 
         if not in_speech and prob >= onset:
             t_start, in_speech = ts, True
@@ -313,6 +367,8 @@ def _vad_one(filepath: str, backend: str = "auto") -> list[dict]:
     if use_silero:
         try:
             return vad_with_silero(filepath)
+        except VadRuntimeError:
+            raise  # missing/tampered pins must not look like healthy fallback analysis
         except Exception as e:
             if backend == "silero":
                 raise
@@ -430,6 +486,40 @@ def serve():
 # CLI
 # ---------------------------------------------------------------------------
 
+def doctor() -> dict:
+    """Prove the exact CPU runtime can infer; no audio files, network or writes."""
+    spec = _runtime_spec()
+    _ensure_silero_model()
+    if np is None:
+        raise VadRuntimeError('dependency_unavailable')
+    try:
+        packages = {item['name']: importlib.metadata.version(item['name']) for item in spec['packages']}
+        import webrtcvad
+        import onnxruntime  # dependency failure has a stable public code
+    except (ImportError, OSError, importlib.metadata.PackageNotFoundError):
+        raise VadRuntimeError('dependency_unavailable') from None
+    if (not platform.python_version().startswith('3.11.')
+            or any(packages[item['name']] != item['version'] for item in spec['packages'])):
+        raise VadRuntimeError('invalid_configuration')
+    session = _silero_session()
+    options = session.get_session_options()
+    if (session.get_providers() != ['CPUExecutionProvider']
+            or options.intra_op_num_threads != 1 or options.inter_op_num_threads != 1):
+        raise VadRuntimeError('invalid_configuration')
+    state = np.zeros((2, 1, 128), dtype=np.float32)
+    context = np.zeros((1, SILERO_CONTEXT_SAMPLES), dtype=np.float32)
+    for _ in range(2):
+        probability, state, context = _silero_step(session, np.zeros(SILERO_CHUNK_SAMPLES, dtype=np.float32), state, context)
+        if probability >= SILERO_ONSET:
+            raise VadRuntimeError('inference_failed')
+    if webrtcvad.Vad(WEBRTC_AGGRESSIVENESS).is_speech(bytes(320), SILERO_SAMPLE_RATE):
+        raise VadRuntimeError('inference_failed')
+    return {'status': 'ok', 'engine': 'silero', 'model_version': spec['model']['version'],
+            'model_sha256': spec['model']['sha256'], 'providers': ['CPUExecutionProvider'],
+            'threads': 1, 'context_samples': SILERO_CONTEXT_SAMPLES, 'inference_frames': 2,
+            'python_version': platform.python_version(), 'packages': packages}
+
+
 def main():
     p = argparse.ArgumentParser(
         description="OpDesk call VAD analysis — pairs sp1/sp2 legs per call",
@@ -454,9 +544,20 @@ def main():
     p.add_argument("--pretty", action="store_true", help="Indent JSON output")
     p.add_argument("--serve", action="store_true",
                    help="Run as the backend's worker: JSON requests on stdin, results on stdout")
+    p.add_argument('--doctor', action='store_true', help='Verify the pinned CPU model and both inference engines')
     args = p.parse_args()
 
     indent = 2 if args.pretty else None
+
+    if args.doctor:
+        try:
+            result = doctor()
+        except VadRuntimeError as error:
+            result = {'status': 'error', 'engine': 'silero', 'error_code': error.code}
+        except Exception:
+            result = {'status': 'error', 'engine': 'silero', 'error_code': 'inference_failed'}
+        print(json.dumps(result))
+        return 0 if result['status'] == 'ok' else 1
 
     if args.serve:
         serve()
@@ -492,4 +593,4 @@ def main():
 
 if __name__ == "__main__":
     logging.basicConfig(level=getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO))
-    main()
+    sys.exit(main())

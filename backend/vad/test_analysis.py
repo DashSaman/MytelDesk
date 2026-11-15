@@ -20,10 +20,11 @@ spec.loader.exec_module(analysis)
 
 class AnalysisTests(unittest.TestCase):
     def test_onnx_receives_context_and_resets_it_between_separate_legs(self):
-        inputs = []
+        inputs, states = [], []
         def infer(_names, values):
             inputs.append(values['input'].copy())
-            return np.array([[0.0]], dtype=np.float32), values['state']
+            states.append(values['state'].copy())
+            return np.array([[0.0]], dtype=np.float32), values['state'] + 1
         session = SimpleNamespace(run=infer)
         samples = np.arange(1024, dtype=np.float32) / 2048.0
         with mock.patch.object(analysis, '_silero_session', return_value=session):
@@ -33,6 +34,9 @@ class AnalysisTests(unittest.TestCase):
         np.testing.assert_array_equal(inputs[0][0, :64], np.zeros(64))
         np.testing.assert_array_equal(inputs[1][0, :64], samples[448:512])
         np.testing.assert_array_equal(inputs[2][0, :64], np.zeros(64))
+        np.testing.assert_array_equal(states[0], np.zeros((2, 1, 128)))
+        np.testing.assert_array_equal(states[1], np.ones((2, 1, 128)))
+        np.testing.assert_array_equal(states[2], np.zeros((2, 1, 128)))
 
     def test_tampered_model_is_rejected_before_onnx_load(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -84,7 +88,8 @@ class DoctorTests(unittest.TestCase):
                    mock.patch.object(analysis, '_silero_session', return_value=self.session),
                    mock.patch('importlib.metadata.version', side_effect=self.versions.__getitem__),
                    mock.patch('platform.python_version', return_value='3.11.18'),
-                   mock.patch.dict(sys.modules, {'webrtcvad': SimpleNamespace(Vad=lambda _mode: self.vad)})]
+                   mock.patch.dict(sys.modules, {'webrtcvad': SimpleNamespace(Vad=lambda _mode: self.vad),
+                                                 'onnxruntime': SimpleNamespace()})]
         for patch in patches:
             patch.start(); self.addCleanup(patch.stop)
 
