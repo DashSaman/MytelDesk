@@ -7,12 +7,21 @@ from pathlib import Path
 import tarfile
 import tempfile
 import unittest
+from unittest import mock
 
 spec = importlib.util.spec_from_file_location('install', Path(__file__).resolve().parents[1] / 'installer/install.py')
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 
 class InstallTests(unittest.TestCase):
+    def test_actual_schema_comments_are_not_expected_tables(self):
+        release=Path(__file__).resolve().parents[1]
+        text=(release/'backend/schema.sql').read_text()
+        import re
+        tables=re.findall(r'^CREATE TABLE IF NOT EXISTS\s+`?([A-Za-z0-9_]+)', text, re.M)
+        with mock.patch.object(mod,'mysql',side_effect=['\n'.join(tables),'1']):
+            mod.verify_app('not-a-live-password',release)
+
     def test_shared_config_edits_are_detected_before_upgrade(self):
         with tempfile.TemporaryDirectory() as d:
             path=Path(d)/'manager_custom.conf'; path.write_text('; original\n#include manager_myteldesk.conf\n')
