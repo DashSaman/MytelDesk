@@ -28,6 +28,24 @@ async function check(name,run,options={}){
    if(fail&&url.pathname==='/MytellDesk/api/settings/'+noun){await json(route,{message:'Temporary fixture failure'},500);return true;}
   }});
  }
+ let reportFail=true;
+ await check('analytics request failures offer retry while preserving the chosen report',async s=>{
+  await s.goto('analytics?tab=overview');assert.equal(await s.page.getByRole('button',{name:'تلاش مجدد',exact:true}).count(),1);
+  reportFail=false;await s.page.getByRole('button',{name:'تلاش مجدد',exact:true}).click();await s.page.waitForTimeout(400);assert.equal(await s.page.locator('main [role=alert]').count(),0);assert.equal(await s.page.locator('#tab-overview').getAttribute('aria-selected'),'true');
+ },{override:async(r,u)=>{if(reportFail&&u.pathname.endsWith('/api/analytics/overview')){await json(r,{message:'Fixture unavailable'},503);return true;}}});
+ await check('supervisor recordings deep link returns to an available page',async s=>{
+  await s.goto('recordings');assert.ok(s.page.url().endsWith('/dashboard'),'Restricted route must not render a blank workspace');
+  assert.equal(s.requests.filter(r=>r.path.endsWith('/api/recordings')).length,0);
+ },{role:'supervisor'});
+ await check('unread SIP settings disable every toggle and offer retry',async s=>{
+  await s.goto('settings?tab=sip-tls');assert.equal(await s.page.locator('main [role=switch]:not([aria-disabled=true])').count(),0);
+  assert.equal(await s.page.getByRole('button',{name:'تلاش مجدد',exact:true}).count(),1);
+ },{override:async(r,u)=>{if(u.pathname.endsWith('/api/sip-tls/status')){await json(r,{message:'Fixture unavailable'},503);return true;}}});
+ await check('unread recording retention cannot save defaults or run cleanup',async s=>{
+  await s.goto('settings?tab=recording');await s.page.locator('#tab-local').click();await s.page.waitForTimeout(250);
+  assert.equal(await s.page.locator('.ui-card-footer button:not(:disabled)').count(),0);
+  assert.equal(await s.page.getByRole('button',{name:'تلاش مجدد',exact:true}).count(),1);
+ },{override:async(r,u)=>{if(u.pathname.endsWith('/api/recording/retention')){await json(r,{message:'Fixture unavailable'},503);return true;}}});
  let analyticsFail=true;
  await check('failed analytics settings cannot save fabricated defaults and can retry',async s=>{
   await s.goto('settings?tab=analytics');
