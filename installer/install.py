@@ -424,6 +424,29 @@ def verify_proxy(public_url):
     finally: connection.close()
 
 
+def wait_proxy_after_reload(public_url, timeout=60):
+    # A graceful Apache reload returns before all workers serve the new proxy.
+    # Retain every strict check; only activation gets a short convergence budget.
+    started = time.monotonic()
+    deadline = started + timeout
+    last_progress = started
+    while time.monotonic() < deadline:
+        try:
+            verify_proxy(public_url)
+            return
+        except (OSError, ValueError, RuntimeError, http.client.HTTPException):
+            pass
+        now = time.monotonic()
+        if now >= deadline: break
+        if now - last_progress >= 15:
+            try:
+                print('Waiting for Apache product proxy: {}s elapsed (limit {}s)'.format(int(now-started), timeout), flush=True)
+            except (OSError, ValueError): pass
+            last_progress = now
+        time.sleep(min(2, deadline-now))
+    raise RuntimeError('Apache product proxy did not become ready; inspect Apache configuration')
+
+
 def install(bundle, public_url=None):
     progress(1, 'Verifying release and Issabel prerequisites')
     manifest = verify_bundle(bundle)
@@ -584,7 +607,7 @@ def install(bundle, public_url=None):
         doctor_vad(release, values, run, service_user='asterisk')
         progress(8, 'Activating Apache configuration')
         run(['systemctl', 'reload', 'httpd'])
-        verify_proxy(public_url)
+        wait_proxy_after_reload(public_url)
         link = ROOT / '.current-next'
         if link.is_symlink(): link.unlink()
         link.symlink_to(release); os.replace(str(link), str(ROOT / 'current'))
