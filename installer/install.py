@@ -372,8 +372,10 @@ def backup_database(password, directory):
     atomic(directory / 'myteldesk.sql', result.stdout)
 
 
-def wait_health(timeout=90):
-    deadline = time.time() + timeout
+def wait_health(timeout=300):
+    started = time.time()
+    deadline = started + timeout
+    last_progress = started
     while time.time() < deadline:
         try:
             with urlopen('http://127.0.0.1:8765/health', timeout=3) as response:
@@ -381,6 +383,10 @@ def wait_health(timeout=90):
             if result.get('status') == 'ok' and result.get('ami_connected') is True:
                 return result
         except Exception: pass
+        now = time.time()
+        if now - last_progress >= 15:
+            print('Waiting for backend/database startup and local AMI: {}s elapsed (limit {}s)'.format(int(now-started), timeout), flush=True)
+            last_progress = now
         time.sleep(2)
     raise RuntimeError('Backend/AMI did not become ready; inspect journalctl -u myteldesk')
 
