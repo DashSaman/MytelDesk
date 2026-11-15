@@ -17,6 +17,17 @@ async function check(name,run,options={}){
 }
 (async()=>{
  app=await start();
+ await check('queue analytics captions and weekday labels follow the Persian calendar',async s=>{
+  await s.goto('analytics?tab=queues');const descriptions=await s.page.locator('main .ui-card-desc').allTextContents();
+  assert.ok(descriptions.some(text=>text.includes('۱۴۰۵')));assert.ok(descriptions.every(text=>!text.includes('2026-')));
+  const days=await s.page.locator('.an-heatmap-day-label').allTextContents();assert.ok(days.includes('شنبه'));assert.ok(!days.includes('Sat'));
+ });
+ await check('queue analytics mobile heatmap can be scrolled from the keyboard',async s=>{
+  await s.goto('analytics?tab=queues');const heat=s.page.locator('.an-heatmap');await heat.focus();
+  assert.equal(await heat.evaluate(e=>e===document.activeElement),true);
+  const before=await heat.evaluate(e=>e.scrollLeft);await s.page.keyboard.press('ArrowLeft');await s.page.waitForTimeout(150);
+  assert.notEqual(await heat.evaluate(e=>e.scrollLeft),before);
+ },{width:390});
  for(const noun of['users','groups']){
   let fail=true;
   await check(noun+' load failures are visible and recoverable without a reload',async s=>{
