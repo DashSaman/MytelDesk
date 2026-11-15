@@ -64,8 +64,8 @@ async function start(){
  const server=await vite.createServer({root:frontend,configFile:false,base:'/MytellDesk/',plugins:[react()],logLevel:'error',server:{host:'127.0.0.1',port:0,hmr:false}});
  await server.listen();const origin='http://127.0.0.1:'+server.httpServer.address().port;
  const browser=await chromium.launch({headless:true,channel:process.env.MT_TEST_BROWSER||'chrome',args:['--mute-audio']});
- async function session({width=1440,height=1000,theme='light',lang='fa',mode='data',role='admin',override}={}){
-  const context=await browser.newContext({viewport:{width,height},serviceWorkers:'block',locale:'en-US',timezoneId:'Asia/Tehran'});
+ async function session({width=1440,height=1000,theme='light',lang='fa',mode='data',role='admin',timezoneId='Asia/Tehran',override}={}){
+  const context=await browser.newContext({viewport:{width,height},serviceWorkers:'block',locale:'en-US',timezoneId});
   const requests=[],errors=[],unknown=[];const me={...user,role};
   await context.addInitScript(({me,theme,lang})=>{
    localStorage.setItem('opdesk_token','product-fixture');localStorage.setItem('opdesk_user',JSON.stringify(me));localStorage.setItem('opdesk-lang',lang);localStorage.setItem('opdesk:theme',theme);
