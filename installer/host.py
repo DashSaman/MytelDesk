@@ -142,13 +142,13 @@ def render_apache(base="/MytellDesk/", backend_port=8765, asterisk_http_port=808
 
 def _absolute_path(value):
     value = os.fspath(value)
-    if not isinstance(value, str) or not re.match(r"^/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*$", value) or any(part in (".", "..") for part in value.split("/")):
+    if not isinstance(value, str) or not re.match(r"\A/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*\Z", value) or any(part in (".", "..") for part in value.split("/")):
         raise ValueError("An absolute path without whitespace, traversal or service specifiers is required")
     return value
 
 
 def _service_identity(value):
-    if value == "root" or not re.match(r"^[a-z_][a-z0-9_-]*$", value):
+    if not isinstance(value, str) or value == "root" or not re.match(r"\A[a-z_][a-z0-9_-]*\Z", value):
         raise ValueError("An unprivileged service account and group are required")
     return value
 
@@ -163,6 +163,10 @@ def render_systemd(node_path, release_dir, env_file, data_dir="/var/lib/myteldes
     """
     node_path, release_dir, env_file, data_dir = [_absolute_path(value) for value in (node_path, release_dir, env_file, data_dir)]
     service_user, service_group = _service_identity(service_user), _service_identity(service_group)
+    if data_dir in ("/etc", "/usr", "/var", "/var/lib", "/var/spool", "/var/log", "/opt", "/run", "/home", "/root", "/tmp"):
+        raise ValueError("A dedicated product data directory is required")
+    if not isinstance(protect_system, bool) or not isinstance(private_tmp, bool):
+        raise ValueError("Systemd protection options must be booleans")
     lines = ["[Unit]", "Description=MytelDesk operator workspace",
              "After=network-online.target mariadb.service asterisk.service httpd.service", "Wants=network-online.target", "",
              "[Service]", "Type=simple", "User=" + service_user, "Group=" + service_group,
