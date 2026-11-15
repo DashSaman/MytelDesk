@@ -13,6 +13,11 @@ mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 
 class InstallTests(unittest.TestCase):
+    def test_real_ami_console_settings_format(self):
+        self.assertTrue(mod.ami_enabled('Global Settings:\n  Manager (AMI):             Yes    \n  Web Manager (AMI/HTTP):    No\n'))
+        self.assertFalse(mod.ami_enabled('Manager (AMI): No\nWeb Manager (AMI/HTTP): Yes\n'))
+        self.assertFalse(mod.ami_enabled('garbled output'))
+
     def test_include_preserves_and_deduplicates(self):
         text = '; preserve\n[other]\nsecret=existing\n'
         added = mod.include_config(text, 'manager_myteldesk.conf')

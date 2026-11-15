@@ -76,10 +76,13 @@ export function subprocessRun(
     refused(argv.join(' '));
     return Promise.resolve({ returncode: 1, stdout: '', stderr: 'refused in shadow mode' });
   }
+  // Standalone installs run as Issabel's existing asterisk account. The unit forbids
+  // privilege escalation; execute these operations with that account's own rights.
+  const command = env('MYTELDESK_DIRECT_PBX', '') === '1' && argv[0] === 'sudo' ? argv.slice(1) : argv;
   return new Promise<CompletedProcess>((resolve, reject) => {
     const child = cp.execFile(
-      argv[0],
-      argv.slice(1),
+      command[0],
+      command.slice(1),
       { encoding: 'buffer', timeout: timeout ? timeout * 1000 : 0, killSignal: 'SIGKILL', maxBuffer: MAX_OUTPUT_BYTES },
       (err, stdout, stderr) => {
         const out = stdout ? Buffer.from(stdout).toString('utf8') : '';
@@ -315,8 +318,12 @@ export async function reloadAsteriskSip(pbxType: string | null = null): Promise<
   try {
     let result: CompletedProcess;
     if (kind === 'issabel') {
-      const amportal = await findAmportal();
-      if (amportal) {
+      if (env('MYTELDESK_DIRECT_PBX', '') === '1') {
+        result = await subprocessRun(['/var/lib/asterisk/bin/retrieve_conf'], { timeout: 120 });
+        if (result.returncode === 0) result = await subprocessRun(['asterisk', '-rx', 'core reload'], { timeout: 60 });
+      } else {
+        const amportal = await findAmportal();
+        if (amportal) {
         log.info("PBX=Issabel detected; running 'amportal a r'...");
         result = await subprocessRun(['sudo', amportal, 'a', 'r'], { timeout: 120 });
       } else {
@@ -324,6 +331,7 @@ export async function reloadAsteriskSip(pbxType: string | null = null): Promise<
         // A fixed command line: the shell is part of the command, nothing is built from input.
         const cmd = '/var/lib/asterisk/bin/retrieve_conf && asterisk -rx "core reload"';
         result = await subprocessRun(['sudo', 'bash', '-c', cmd], { timeout: 60 });
+        }
       }
     } else {
       log.info("Running 'fwconsole reload' to apply SIP/WebRTC changes...");
