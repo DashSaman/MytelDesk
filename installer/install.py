@@ -575,7 +575,12 @@ def install(bundle, public_url=None):
         progress(7, 'Starting MytelDesk and checking database/AMI readiness')
         run(['systemctl', 'enable', 'myteldesk'])
         run(['systemctl', 'restart', 'myteldesk'])
-        wait_health(); verify_app(password, release)
+        # A cold first boot can spend several minutes loading Node modules and
+        # creating the application schema on slow storage. Existing ready
+        # deployments keep their normal activation/rollback time budget.
+        if previous.get('status') == 'ready': wait_health()
+        else: wait_health(timeout=900)
+        verify_app(password, release)
         doctor_vad(release, values, run, service_user='asterisk')
         progress(8, 'Activating Apache configuration')
         run(['systemctl', 'reload', 'httpd'])
