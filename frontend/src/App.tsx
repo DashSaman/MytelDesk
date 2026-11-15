@@ -60,6 +60,7 @@ import type { LucideIcon } from 'lucide-react';
 import { ThemeToggle } from './components/ThemeToggle';
 import { Badge, EmptyState, Tabs } from './components/ui';
 import { isTopmostTrap, useFocusTrap, useInert } from './components/ui/focus';
+import { appPath } from './lib/app-url';
 import { CallStatusBadge } from './components/CallStatusBadge';
 import { callStatusLabel, isCallStatus } from './components/callStatus';
 import { memberExtension } from './components/queueMemberState';
@@ -480,7 +481,7 @@ function App({ onLogout }: AppProps) {
     // (browsers won't autoplay looping audio in the background).
     const options: NotificationOptions & { vibrate?: number[] } = {
       body,
-      icon: '/favicon.svg',
+      icon: appPath('/favicon.svg'),
       tag: 'opdesk-incoming-call',
       requireInteraction: true,
       vibrate: [300, 150, 300, 150, 300],
