@@ -1,0 +1,152 @@
+const TOKEN_KEY = 'opdesk_token';
+const USER_KEY = 'opdesk_user';
+
+export function getToken(): string | null {
+  return localStorage.getItem(TOKEN_KEY);
+}
+
+export function setToken(token: string): void {
+  localStorage.setItem(TOKEN_KEY, token);
+}
+
+export function removeToken(): void {
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(USER_KEY);
+}
+
+export type User = {
+  id: number;
+  username: string;
+  name?: string;
+  role: string;
+  extension?: string | null;
+  /** Call monitoring modes (multiple): listen, whisper, barge. From DB user_monitor_modes. */
+  monitor_modes?: ('listen' | 'whisper' | 'barge')[];
+  /** Admin: undefined (see all). Supervisor: list of extension numbers they can see. */
+  allowed_agent_extensions?: string[] | null;
+  /** Admin: undefined (see all). Supervisor: list of queue names they can see. */
+  allowed_queue_names?: string[] | null;
+  /** True when the user's extension has queues to log in to (queue agent); false for
+   *  a plain extension. Undefined on servers that predate the flag. */
+  is_agent?: boolean;
+};
+
+export function setUser(user: User): void {
+  localStorage.setItem(USER_KEY, JSON.stringify(user));
+}
+
+export function getUser(): User | null {
+  const raw = localStorage.getItem(USER_KEY);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+/** True if current user has limited scope (supervisor with groups, or agent seeing only their extension). */
+export function isFilteredScope(): boolean {
+  const u = getUser();
+  if (u?.role === 'agent') return true;
+  return u?.role === 'supervisor' && (
+    (Array.isArray(u.allowed_agent_extensions) && u.allowed_agent_extensions.length > 0) ||
+    (Array.isArray(u.allowed_queue_names) && u.allowed_queue_names.length > 0)
+  );
+}
+
+/** Human-readable label for a single mode. */
+export function getMonitorModeLabel(mode: string | undefined): string {
+  switch (mode) {
+    case 'listen': return 'Listen';
+    case 'whisper': return 'Whisper';
+    case 'barge': return 'Barge';
+    default: return 'Listen';
+  }
+}
+
+/** Human-readable label for monitor_modes list (e.g. "Listen, Whisper"). */
+export function getMonitorModesLabel(modes: string[] | undefined): string {
+  if (!modes || modes.length === 0) return 'Listen';
+  const labels = modes.map(m => getMonitorModeLabel(m)).filter(Boolean);
+  return labels.length ? labels.join(', ') : 'Listen';
+}
+
+/** Which supervisor action buttons to show based on monitor_modes from DB. Agents never
+ *  supervise (the server refuses it), so they get none. */
+export function getAllowedMonitorModes(): ('listen' | 'whisper' | 'barge')[] {
+  const user = getUser();
+  if (!user || user.role === 'agent') return [];
+  const modes = user.monitor_modes;
+  if (Array.isArray(modes) && modes.length > 0) return modes as ('listen' | 'whisper' | 'barge')[];
+  return ['listen'];
+}
+
+export function isAuthenticated(): boolean {
+  return !!getToken();
+}
+
+/** Headers for authenticated fetch requests */
+export function getAuthHeaders(): Record<string, string> {
+  const token = getToken();
+  if (!token) return {};
+  return { Authorization: `Bearer ${token}` };
+}
+
+/** Dispatch this event to trigger a global logout (e.g. on 401). */
+export function dispatchUnauthorized(): void {
+  removeToken();
+  window.dispatchEvent(new CustomEvent('opdesk:unauthorized'));
+}
+
+/** Drop-in replacement for fetch that auto-logs out on 401. */
+export async function fetchWithAuth(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const headers = { ...getAuthHeaders(), ...(init?.headers as Record<string, string> | undefined) };
+  const res = await fetch(input, { ...init, headers });
+  if (res.status === 401) {
+    dispatchUnauthorized();
+  }
+  return res;
+}
+
+/** Thrown by fetchRecordingBlob; `status` is the HTTP status, 0 for a network failure. */
+export class RecordingFetchError extends Error {
+  readonly status: number;
+  constructor(status: number) {
+    super(`Recording request failed (${status || 'network'})`);
+    this.name = 'RecordingFetchError';
+    this.status = status;
+  }
+}
+
+/**
+ * Fetch a recording with the Bearer header and return an object URL for it.
+ *
+ * `/api/recordings/...` does not take a token in the query string (a token in a URL
+ * ends up in access logs, browser history and copied links), so `<audio src>` and
+ * download links point at a blob instead. The caller owns the URL and must
+ * `URL.revokeObjectURL` it.
+ */
+export async function fetchRecordingBlob(path: string, signal?: AbortSignal): Promise<string> {
+  let res: Response;
+  try {
+    res = await fetchWithAuth(`/api/recordings/${encodeURIComponent(path)}`, { signal });
+  } catch (e) {
+    if (signal?.aborted) throw e;
+    throw new RecordingFetchError(0);
+  }
+  if (!res.ok) throw new RecordingFetchError(res.status);
+  return URL.createObjectURL(await res.blob());
+}
+
+
+/** MyTellPBX bridge: read token from URL fragment (#t=TOKEN) on first load */
+export function importBridgeToken(): boolean {
+  const m = window.location.hash.match(/^#t=([A-Za-z0-9._-]+)/);
+  if (m && m[1]) {
+    setToken(m[1]);
+    history.replaceState(null, "", window.location.pathname + window.location.search);
+    return true;
+  }
+  return false;
+}

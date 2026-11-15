@@ -1,0 +1,48 @@
+.git
+.github
+.vscode
+
+# Node: dependencies and build output
+node_modules
+frontend/dist
+frontend/dist.prev
+backend/dist
+backend/dist.prev
+backend/coverage
+*.tsbuildinfo
+
+# Voice-activity analysis venv (install.sh) and Python bytecode
+backend/vad/.venv/
+__pycache__/
+*.pyc
+
+# Generated per host by install.sh: nginx site, certificates, secrets, runtime config
+nginx/*
+!nginx/opdesk.conf.example
+cert/
+secrets/
+.env
+.env.bak
+backend/.env
+backend/.env.bak
+backend/.admin_init_hash
+
+.claude/
+
+# Deployment-only material must never enter public history.
+.env*
+!.env.example
+*.bak*
+.admin_init_hash
+*.sqlite*
+*.db
+*.db-*
+secrets/
+cert/
+logs/
+*.log
+*.pem
+*.key
+*.p8
+credentials*
+installer-state*

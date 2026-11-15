@@ -1,0 +1,527 @@
+-- OpDesk database schema (the application database, DB_OpDesk, default "OpDesk").
+--
+-- One source of truth for the tables: the backend's startup migration
+-- (src/db/migrate.ts) runs every CREATE TABLE IF NOT EXISTS below, in file order, on
+-- each start, then adds missing columns through information_schema-guarded ALTERs and
+-- writes the seeds (admin account, default Not-Ready codes, the __WRAPUP system code,
+-- default settings). An upgraded database and a fresh one therefore end up with the
+-- same tables. The file can also be applied by hand or by the installer
+-- (mysql < schema.sql); it holds DDL only, so re-running it never brings back rows an
+-- admin deleted.
+--
+-- Table order matters: a table appears after every table its foreign keys reference.
+--
+-- MariaDB 5.5 / MySQL 5.5 compatibility (Sangoma 7 / CentOS 7):
+--   1. VARCHAR(255) PRIMARY KEY with utf8mb4 exceeds the 767-byte InnoDB key limit
+--      (255 chars x 4 bytes = 1020 bytes), hence VARCHAR(191) keys.
+--   2. DATETIME DEFAULT CURRENT_TIMESTAMP needs MySQL 5.6 / MariaDB 10.0, hence
+--      TIMESTAMP for auto-populated columns.
+--   3. No JSON columns, no ADD COLUMN IF NOT EXISTS: JSON is kept in TEXT, and column
+--      additions are guarded by the migration instead.
+--
+-- Housekeeping is done by the backend's daily job, not by MySQL EVENTs: the event
+-- scheduler needs SUPER to enable and is off on these boxes. (Older installs carry an
+-- evt_cleanup_read_call_notifications event; it is harmless and can be dropped.)
+
+CREATE DATABASE IF NOT EXISTS OpDesk CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+USE OpDesk;
+
+-- =============================================================================
+-- Settings
+-- =============================================================================
+-- Settings table for storing application configuration
+-- FIX: VARCHAR(191) instead of VARCHAR(255) to stay within 767-byte InnoDB key
+--      limit when using utf8mb4 (191 × 4 = 764 bytes < 767 bytes).
+CREATE TABLE IF NOT EXISTS OpDesk_settings (
+    setting_key VARCHAR(191) PRIMARY KEY,
+    setting_value TEXT,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- =============================================================================
+-- Accounts, groups, agents and queues
+-- =============================================================================
+
+-- User table (login by username or extension)
+-- FIX: created_at / last_login_at changed from DATETIME to TIMESTAMP so that
+--      DEFAULT CURRENT_TIMESTAMP works on MariaDB 5.5 / MySQL 5.5.
+CREATE TABLE IF NOT EXISTS users (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    username VARCHAR(100) UNIQUE NOT NULL,
+    extension VARCHAR(20) UNIQUE NULL,
+    password_hash VARCHAR(255),
+    name VARCHAR(255),
+    webrtc ENUM('yes', 'no') DEFAULT 'no',
+    role ENUM('admin', 'supervisor','agent') NOT NULL,
+    is_active TINYINT(1) DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_login_at TIMESTAMP NULL DEFAULT NULL,
+
+    INDEX idx_username (username),
+    INDEX idx_extension (extension),
+    INDEX idx_active (is_active)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- User monitor modes: multiple modes per user (listen, whisper, barge).
+-- (Legacy: if your users table still has monitor_mode column, you can drop it: ALTER TABLE users DROP COLUMN monitor_mode;)
+CREATE TABLE IF NOT EXISTS user_monitor_modes (
+    user_id INT NOT NULL,
+    mode VARCHAR(20) NOT NULL,
+    PRIMARY KEY (user_id, mode),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    INDEX idx_user (user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Agents table
+CREATE TABLE IF NOT EXISTS agents (
+    extension VARCHAR(20) PRIMARY KEY,
+    name VARCHAR(100),
+    INDEX idx_name (name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Queues table
+CREATE TABLE IF NOT EXISTS queues (
+    extension VARCHAR(20) PRIMARY KEY,
+    queue_name VARCHAR(100) UNIQUE NOT NULL,
+    INDEX idx_queue_name (queue_name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Groups table
+-- FIX: created_at changed from DATETIME to TIMESTAMP for MariaDB 5.5 compatibility.
+CREATE TABLE IF NOT EXISTS groups (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    name VARCHAR(100) UNIQUE NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    INDEX idx_name (name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Junction: users <-> groups (optionally override monitor_mode per group)
+CREATE TABLE IF NOT EXISTS user_groups (
+    user_id INT,
+    group_id INT,
+    -- NULL = use user's default monitor_mode; otherwise overrides for this group. Values must match user_monitor_modes: listen, whisper, barge.
+    monitor_mode ENUM('listen', 'whisper', 'barge') NULL DEFAULT NULL,
+    PRIMARY KEY (user_id, group_id),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE,
+    INDEX idx_group (group_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Junction: groups <-> agents
+CREATE TABLE IF NOT EXISTS group_agents (
+    group_id INT,
+    agent_ext VARCHAR(20),
+    PRIMARY KEY (group_id, agent_ext),
+    FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE,
+    FOREIGN KEY (agent_ext) REFERENCES agents(extension) ON DELETE CASCADE,
+    INDEX idx_agent (agent_ext)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Junction: groups <-> queues (uses queues.extension like group_agents uses agents.extension)
+CREATE TABLE IF NOT EXISTS group_queues (
+    group_id INT,
+    queue_extension VARCHAR(20),
+    PRIMARY KEY (group_id, queue_extension),
+    FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE,
+    FOREIGN KEY (queue_extension) REFERENCES queues(extension) ON DELETE CASCADE,
+    INDEX idx_queue (queue_extension)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- =============================================================================
+-- Calls
+-- =============================================================================
+
+-- Call notifications: one row per call hangup for an extension (created in AMI _ev_Hangup).
+-- UI can mark as read or archived.
+-- FIX: event_time changed from DATETIME to TIMESTAMP for MariaDB 5.5 compatibility.
+CREATE TABLE IF NOT EXISTS call_notifications (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    extension VARCHAR(20) NOT NULL,
+    caller_from VARCHAR(50) NULL,
+    queue VARCHAR(100) NULL,
+    status_flag ENUM('new', 'read', 'archived') DEFAULT 'new',
+    reason VARCHAR(255) NULL,
+    event_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    call_id VARCHAR(255) NULL,
+    INDEX idx_extension (extension),
+    INDEX idx_status (status_flag),
+    INDEX idx_event_time (event_time),
+    INDEX idx_caller_from (caller_from)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Per-call VAD (voice activity) analysis of the separate caller/callee recording legs.
+-- Written post-call by the opdesk_vad AGI worker (pushed as a hangup handler in the
+-- [opdesk-record] dialplan): it pairs <base>-sp1/<base>-sp2, runs WebRTC VAD per leg, and
+-- POSTs the result to /api/internal/call-vad. One row per call, keyed by uniqueid.
+CREATE TABLE IF NOT EXISTS call_vad (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    uniqueid VARCHAR(32) NOT NULL UNIQUE,
+    base VARCHAR(255) NULL,
+    duration FLOAT NULL,
+    sp1_talk_seconds FLOAT NULL,
+    sp2_talk_seconds FLOAT NULL,
+    overlap_seconds FLOAT NULL,
+    sp1_segments INT NULL,
+    sp2_segments INT NULL,
+    segments LONGTEXT NULL,           -- full JSON: {sp1:[{start,end}...], sp2:[...]}
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_uniqueid (uniqueid),
+    INDEX idx_created_at (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Supervision events: one row per ChanSpy leg (listen/whisper/barge), keyed by the
+-- spy channel's linkedid (== the deterministic ChannelId set when originating the spy).
+-- Lets the call log flag/hide the standalone ChanSpy CDR row and attach it to the
+-- monitored call it supervised.
+CREATE TABLE IF NOT EXISTS call_supervision (
+    id                    INT PRIMARY KEY AUTO_INCREMENT,
+    spy_linkedid          VARCHAR(64) NOT NULL UNIQUE,   -- linkedid of the ChanSpy leg (its own CDR call); == the ChannelId we set
+    spy_uniqueid          VARCHAR(64) NULL,              -- uniqueid of the ChanSpy leg (usually == spy_linkedid)
+    target_linkedid       VARCHAR(64) NULL,              -- the monitored call this supervision belongs to
+    target_extension      VARCHAR(20) NULL,              -- the spied-on agent's extension
+    supervisor_extension  VARCHAR(20) NULL,              -- the supervisor doing listen/whisper/barge
+    mode                  ENUM('listen','whisper','barge') NOT NULL DEFAULT 'listen',
+    created_at            TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_spy_linkedid (spy_linkedid),
+    INDEX idx_target_linkedid (target_linkedid),
+    INDEX idx_created_at (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- =============================================================================
+-- Push (mobile and browser softphones)
+-- =============================================================================
+
+-- Device push tokens: one row per (device, token_type). A mobile softphone registers its
+-- FCM/APNs token here so the backend can wake it for incoming calls (VoIP push) and send
+-- missed-call alerts when the app is backgrounded and the SIP-over-WSS registration is gone.
+-- FIX: token stored in TEXT (FCM tokens exceed 191 chars) and keyed on a SHA-256 hash, because
+--      a VARCHAR(255) UNIQUE under utf8mb4 = 1020 bytes > 767-byte InnoDB key limit (MariaDB 5.5).
+--      token_type distinguishes the iOS PushKit/VoIP token from the regular APNs/FCM alert token
+--      (an iOS device registers both).
+CREATE TABLE IF NOT EXISTS device_tokens (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    user_id INT NOT NULL,
+    extension VARCHAR(20) NULL,
+    platform ENUM('ios', 'android', 'web') NOT NULL,
+    token_type ENUM('voip', 'alert') NOT NULL DEFAULT 'alert',
+    token TEXT NOT NULL,
+    token_hash CHAR(64) NOT NULL,
+    app_version VARCHAR(40) NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_token_hash (token_hash),
+    INDEX idx_user (user_id),
+    INDEX idx_extension (extension),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- RFC 8599 push bindings: the pn-provider / pn-prid / pn-param a softphone puts in its
+-- REGISTER Contact URI, learned from Asterisk's contacts over AMI. Kept after the SIP
+-- registration expires, so a killed app can still be woken for the next call.
+-- binding_hash = SHA-256(extension, provider, prid, param); prid_hash finds every row
+-- holding a token the push provider reported as dead.
+CREATE TABLE IF NOT EXISTS sip_push_bindings (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    extension VARCHAR(40) NOT NULL,
+    pn_provider VARCHAR(32) NOT NULL,
+    pn_prid TEXT NOT NULL,
+    pn_param VARCHAR(255) NULL,
+    prid_hash CHAR(64) NOT NULL,
+    binding_hash CHAR(64) NOT NULL,
+    contact_uri TEXT NULL,
+    user_agent VARCHAR(255) NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_seen_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_binding (binding_hash),
+    INDEX idx_extension (extension),
+    INDEX idx_prid (prid_hash)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- =============================================================================
+-- Contact center: Not-Ready codes and agent presence
+-- =============================================================================
+
+-- Not-Ready Codes (pause reasons): agents pick one when going Not-Ready (QueuePause
+-- reason). `productive` splits paid work (meeting, training) from breaks for adherence.
+-- is_system rows (code prefix "__", e.g. __WRAPUP = after-call work) are used by the
+-- backend itself: hidden from the agent picker, never edited or deleted via the API.
+-- The migration seeds the 4 default codes into an EMPTY table only (deleted codes stay
+-- deleted) and the system codes on every start.
+CREATE TABLE IF NOT EXISTS pause_reasons (
+    id          INT AUTO_INCREMENT PRIMARY KEY,
+    code        VARCHAR(64) NOT NULL UNIQUE,
+    label       VARCHAR(191) NOT NULL,
+    productive  TINYINT(1) NOT NULL DEFAULT 0,
+    color       VARCHAR(16) DEFAULT NULL,
+    sort_order  INT NOT NULL DEFAULT 100,
+    is_active   TINYINT(1) NOT NULL DEFAULT 1,
+    is_system   TINYINT(1) NOT NULL DEFAULT 0
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Agent presence segments — the Agent Adherence report's data source. One append-only
+-- row per presence period; ended_at IS NULL marks the currently-open segment. Written
+-- by the agent state service from the agent login/logout/status actions and reconciled
+-- from AMI (AgentConnect -> on_call, AgentComplete -> wrap_up, pause/unpause). Sessions,
+-- break and DND time are derived from these rows by the adherence report.
+--   ready       = logged into queue(s), not paused, not on an ACD call
+--   on_call     = connected to an ACD call (AgentConnect -> AgentComplete)
+--   not_ready   = logged in, paused with a pause_reasons.code
+--   wrap_up     = paused with the system reason __WRAPUP (after-call work)
+--   dnd         = logged in, Do Not Disturb
+CREATE TABLE IF NOT EXISTS agent_activity (
+    id            BIGINT PRIMARY KEY AUTO_INCREMENT,
+    agent_ext     VARCHAR(20) NOT NULL,
+    state         VARCHAR(20) NOT NULL,               -- ready / on_call / not_ready / wrap_up / dnd
+    reason_code   VARCHAR(64) NULL,                   -- pause_reasons.code when state=not_ready/wrap_up
+    queue         VARCHAR(40) NULL,                   -- ACD queue for on_call, if known
+    linkedid      VARCHAR(64) NULL,                   -- the call, for on_call
+    started_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    ended_at      TIMESTAMP NULL DEFAULT NULL,
+    duration_secs INT NULL,                           -- filled when the segment closes
+    source        VARCHAR(20) NOT NULL DEFAULT 'ui',  -- ui / ami / system
+    INDEX idx_agent_started (agent_ext, started_at),
+    INDEX idx_started (started_at),
+    INDEX idx_open (agent_ext, ended_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- =============================================================================
+-- Analytics
+-- =============================================================================
+
+-- Per-queue SLA threshold configuration.
+-- If a queue has no row here, the backend falls back to OpDesk_settings 'SLA_DEFAULT_SECS'.
+-- FIX: FOREIGN KEY omitted intentionally — queues table is populated lazily from FreePBX;
+--      a FK would block saving SLA settings before the queue extension appears in OpDesk.queues.
+CREATE TABLE IF NOT EXISTS analytics_sla_settings (
+    queue_extension  VARCHAR(20) PRIMARY KEY,
+    threshold_secs   SMALLINT UNSIGNED NOT NULL DEFAULT 20,
+    updated_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Global FCR and short-abandon configuration (singleton row, id=1).
+-- The migration seeds the id=1 row (INSERT IGNORE).
+-- FIX: DATETIME → TIMESTAMP for MariaDB 5.5 compatibility.
+--
+-- callback_window_hours: how long after a call one of OUR outbound calls to the same
+-- customer still counts as us calling them back. FCR reads such a callback as proof the
+-- first contact did not resolve anything, and the abandoned-caller recovery figure reads it
+-- as reaching someone who gave up waiting. One setting for both, so the same call cannot be
+-- a recovery but not an FCR repeat. 0 turns callbacks off. Older databases gain the column
+-- through the migration's column guards (src/db/migrate.ts).
+CREATE TABLE IF NOT EXISTS analytics_fcr_settings (
+    id                    TINYINT PRIMARY KEY DEFAULT 1,
+    window_days           TINYINT UNSIGNED NOT NULL DEFAULT 7,
+    short_abandon_secs    SMALLINT UNSIGNED NOT NULL DEFAULT 5,
+    callback_window_hours SMALLINT UNSIGNED NOT NULL DEFAULT 24,
+    updated_at            TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Pre-aggregated hourly metrics per queue (populated by the analytics background task every 15 min).
+-- UNIQUE KEY on (hour_bucket, queue_extension) allows INSERT ... ON DUPLICATE KEY UPDATE.
+-- FIX: hour_bucket is DATETIME (not TIMESTAMP) because timestamps beyond 2038 are valid here.
+CREATE TABLE IF NOT EXISTS analytics_hourly (
+    id              INT PRIMARY KEY AUTO_INCREMENT,
+    hour_bucket     DATETIME NOT NULL,
+    queue_extension VARCHAR(20) NOT NULL,
+    total_calls     MEDIUMINT UNSIGNED DEFAULT 0,
+    answered_calls  MEDIUMINT UNSIGNED DEFAULT 0,
+    abandoned_calls MEDIUMINT UNSIGNED DEFAULT 0,
+    short_abandoned MEDIUMINT UNSIGNED DEFAULT 0,
+    sum_wait_secs   INT UNSIGNED DEFAULT 0,
+    sum_billsec     INT UNSIGNED DEFAULT 0,
+    sla_met_calls   MEDIUMINT UNSIGNED DEFAULT 0,
+    computed_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_hour_queue (hour_bucket, queue_extension),
+    INDEX idx_hour (hour_bucket),
+    INDEX idx_queue (queue_extension)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Pre-aggregated daily metrics per queue.
+-- unique_callers / fcr_callbacks support FCR computation without a full CDR scan.
+CREATE TABLE IF NOT EXISTS analytics_daily (
+    id              INT PRIMARY KEY AUTO_INCREMENT,
+    day_bucket      DATE NOT NULL,
+    queue_extension VARCHAR(20) NOT NULL,
+    total_calls     MEDIUMINT UNSIGNED DEFAULT 0,
+    answered_calls  MEDIUMINT UNSIGNED DEFAULT 0,
+    abandoned_calls MEDIUMINT UNSIGNED DEFAULT 0,
+    short_abandoned MEDIUMINT UNSIGNED DEFAULT 0,
+    sum_wait_secs   INT UNSIGNED DEFAULT 0,
+    sum_billsec     INT UNSIGNED DEFAULT 0,
+    sla_met_calls   MEDIUMINT UNSIGNED DEFAULT 0,
+    unique_callers  MEDIUMINT UNSIGNED DEFAULT 0,
+    fcr_callbacks   MEDIUMINT UNSIGNED DEFAULT 0,
+    computed_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_day_queue (day_bucket, queue_extension),
+    INDEX idx_day (day_bucket),
+    INDEX idx_queue (queue_extension)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Pre-aggregated daily metrics per agent (and optionally per queue).
+-- Empty-string queue_extension = across all queues for that agent.
+CREATE TABLE IF NOT EXISTS analytics_agent_daily (
+    id              INT PRIMARY KEY AUTO_INCREMENT,
+    day_bucket      DATE NOT NULL,
+    agent_extension VARCHAR(20) NOT NULL,
+    queue_extension VARCHAR(20) NOT NULL DEFAULT '',
+    answered_calls  MEDIUMINT UNSIGNED DEFAULT 0,
+    sum_billsec     INT UNSIGNED DEFAULT 0,
+    sla_met_calls   MEDIUMINT UNSIGNED DEFAULT 0,
+    computed_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_day_agent_queue (day_bucket, agent_extension, queue_extension),
+    INDEX idx_day (day_bucket),
+    INDEX idx_agent (agent_extension)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- =============================================================================
+-- Integrations: API keys, CRM delivery log, contacts
+-- =============================================================================
+
+-- Machine-to-machine API keys
+-- Long-lived system credentials scoped to an explicit permission list. The
+-- plaintext key (prefix "opd_") is shown once at creation; only its SHA-256 hash
+-- is stored. `scopes` is a JSON array of permission tokens, kept as TEXT rather
+-- than a native JSON column for MariaDB 5.5 compatibility (see the header note).
+CREATE TABLE IF NOT EXISTS api_keys (
+    id           INT PRIMARY KEY AUTO_INCREMENT,
+    name         VARCHAR(191) NOT NULL,
+    key_prefix   VARCHAR(16)  NOT NULL,   -- leading chars of the token, for display ("opd_ab12cd34…")
+    key_hash     CHAR(64)     NOT NULL,   -- SHA-256 hex of the full plaintext key
+    scopes       TEXT         NOT NULL,   -- JSON array of permission strings
+    enabled      TINYINT(1)   NOT NULL DEFAULT 1,
+    created_by   INT          NULL,       -- users.id of the admin who created it
+    last_used_at TIMESTAMP    NULL,
+    expires_at   TIMESTAMP    NULL,       -- NULL => never expires
+    created_at   TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_api_key_hash (key_hash),
+    INDEX idx_api_key_prefix (key_prefix)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- CRM webhook delivery log + retry queue
+-- One row per CRM push (Logs -> Deliveries in the UI): recorded BEFORE the first
+-- attempt, so a CRM that is down or 500-ing costs a retry rather than the call. The
+-- retry worker re-sends a row while it is 'pending' and due; a manual Resend makes a
+-- new row (attempt + 1, parent_id = the original) from the stored request_body.
+--
+-- status: pending   -> queued; next_attempt_at is when the worker may try again
+--         delivered -> the CRM answered 2xx
+--         failed    -> permanent rejection (a 4xx the CRM will reject again)
+--         abandoned -> retryable, but max_attempts is spent
+-- `attempts` counts the sends of THIS row (bumped when the worker claims it, and the
+-- claim leases the row by pushing next_attempt_at forward, so a process that dies
+-- mid-send leaves nothing stuck); `attempt` is the resend lineage (1 = original).
+-- `delivery_uuid` goes out as the Idempotency-Key / X-OpDesk-Delivery-Id header, so a
+-- receiver can discard a retry of a push whose first attempt landed but whose
+-- response never came back.
+--
+-- PRIVACY: rows contain call metadata (phone numbers, caller/agent names,
+-- extensions) and the full request body, so this table inherits the database's
+-- backup and retention posture. Request headers are deliberately NOT stored — that
+-- is where the CRM credentials are. `url` is stored with its query string and any
+-- embedded credentials stripped. Rows are pruned per WEBHOOK_LOG_RETENTION_DAYS.
+CREATE TABLE IF NOT EXISTS webhook_deliveries (
+    id            BIGINT PRIMARY KEY AUTO_INCREMENT,
+    created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    call_id       VARCHAR(64)   NULL,      -- Linkedid; joins to the call log
+    uniqueid      VARCHAR(64)   NULL,      -- per-leg id (receiver de-dup key)
+    caller        VARCHAR(64)   NULL,
+    destination   VARCHAR(64)   NULL,
+    call_type     VARCHAR(16)   NULL,      -- inbound | outbound | internal
+    call_status   VARCHAR(24)   NULL,      -- canonical outcome at send time
+    method        VARCHAR(8)    NOT NULL DEFAULT 'POST',
+    url           VARCHAR(1024) NOT NULL,  -- redacted: no query string, no userinfo
+    request_body  MEDIUMTEXT    NULL,      -- JSON actually sent, truncated
+    status_code   SMALLINT      NULL,      -- NULL => transport error, never reached the CRM
+    success       TINYINT(1)    NOT NULL DEFAULT 0,
+    response_body MEDIUMTEXT    NULL,      -- truncated; may be non-JSON
+    error         TEXT          NULL,      -- truncated
+    duration_ms   INT UNSIGNED  NULL,
+    attempt       SMALLINT UNSIGNED NOT NULL DEFAULT 1,  -- 1 = original, >1 = manual resend
+    parent_id     BIGINT        NULL,      -- the delivery a resend derives from
+    resent_by     INT           NULL,      -- users.id who clicked Resend
+    truncated     TINYINT(1)    NOT NULL DEFAULT 0,      -- request_body was clipped => not resendable
+    delivery_uuid CHAR(36)      NULL,      -- idempotency key sent with every attempt
+    status        VARCHAR(12)   NOT NULL DEFAULT 'pending',  -- pending | delivered | failed | abandoned
+    attempts      SMALLINT UNSIGNED NOT NULL DEFAULT 1,  -- sends of this row so far
+    max_attempts  SMALLINT UNSIGNED NOT NULL DEFAULT 1,  -- the retry budget stamped at push time
+    next_attempt_at DATETIME    NULL,      -- when the worker may send again; NULL once terminal
+    endpoint_path VARCHAR(255)  NULL,      -- path as resolved at push time (retries reuse it)
+    trigger_kind  VARCHAR(16)   NOT NULL DEFAULT 'hangup',   -- hangup | wrapup | resend
+    delivered_at  DATETIME      NULL,
+    INDEX idx_created (created_at),
+    INDEX idx_call (call_id),
+    INDEX idx_success_created (success, created_at),
+    INDEX idx_parent (parent_id),
+    UNIQUE KEY uq_delivery_uuid (delivery_uuid),
+    -- The worker's hot query: due pending rows, oldest deadline first.
+    INDEX idx_due (status, next_attempt_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Contacts (system phonebook). One row per phone number; the single source of
+-- truth for caller names on dashboards and the softphone. source is the
+-- precedence ladder, highest first: 'manual' (created/edited by an admin in the
+-- Contacts page) > 'api' (pushed by an external system over an API key with
+-- contacts:write) > 'crm' (auto-inserted by the CRM lookup the first time a
+-- number resolved). A lower source never overwrites a higher one, so curated
+-- data always wins; editing a row in the UI flips it to manual.
+-- phone_key is the normalized match key: digits only, reduced to the last N per
+-- CRM_LOOKUP_MATCH_DIGITS, for every source, so the UNIQUE below means what the
+-- resolver's in-memory map means.
+-- external_id + source_system are the pushing system's own identity, so a contact
+-- whose number changed upstream updates its row instead of stranding it.
+-- PRIVACY: contains customer phone numbers and names.
+CREATE TABLE IF NOT EXISTS contacts (
+    id         INT AUTO_INCREMENT PRIMARY KEY,
+    name       VARCHAR(255) NOT NULL,
+    phone      VARCHAR(64)  NOT NULL,     -- as entered / as dialed (display form)
+    phone_key  VARCHAR(32)  NOT NULL,     -- normalized digits (match key)
+    company    VARCHAR(255) NULL,
+    notes      TEXT NULL,
+    source     ENUM('manual','api','crm') NOT NULL DEFAULT 'manual',
+    external_id   VARCHAR(128) NULL,      -- id in the pushing system
+    source_system VARCHAR(48)  NULL,      -- which system pushed it
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uniq_phone_key (phone_key),
+    -- (48 + 128) * 4 bytes stays under MariaDB 5.5's 767-byte index limit.
+    UNIQUE KEY uniq_contact_external (source_system, external_id),
+    -- Keyset paging walks (name, id); a prefix keeps the key under the same limit.
+    INDEX idx_contact_name (name(150), id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- =============================================================================
+-- Audit trail
+-- =============================================================================
+
+-- One row per mutating API request (2xx POST/PUT/PATCH/DELETE under /api), written by
+-- the audit middleware. `detail` is JSON a route attached to say what the mutation
+-- carried or removed (allowlisted fields only, never a request body); NULL otherwise,
+-- capped at 64K characters by the writer.
+CREATE TABLE IF NOT EXISTS audit_log (
+    id            BIGINT PRIMARY KEY AUTO_INCREMENT,
+    actor_ext     VARCHAR(191) NULL,
+    actor_user_id INT NULL,
+    action        VARCHAR(16) NOT NULL,
+    entity_type   VARCHAR(64) NOT NULL,
+    entity_id     VARCHAR(64) NULL,
+    summary       TEXT NULL,
+    ip            VARCHAR(64) NULL,
+    detail        MEDIUMTEXT NULL,
+    created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_audit_entity (entity_type, entity_id),
+    INDEX idx_audit_created (created_at),
+    INDEX idx_audit_actor (actor_ext)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- MyTellPBX v7.2.0: external identity mapping for panel-sourced desk
+-- accounts. UNIQUE(provider, external_id) is the immutable identity.
+CREATE TABLE IF NOT EXISTS user_identities (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    provider   VARCHAR(64)  NOT NULL,
+    external_id VARCHAR(64) NOT NULL,
+    user_id    INT          NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_provider_external (provider, external_id),
+    KEY idx_identity_user (user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

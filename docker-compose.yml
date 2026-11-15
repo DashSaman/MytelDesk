@@ -1,0 +1,26 @@
+services:
+  opdesk:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: opdesk
+    restart: unless-stopped
+    # Host networking: the container shares the host's network stack, so MariaDB and Asterisk AMI
+    # are reached on 127.0.0.1 exactly as in a native install (no Docker subnets in manager.conf).
+    # The backend serves plain HTTP on OPDESK_BIND_HOST:PORT (127.0.0.1:8765); nginx on the host
+    # terminates TLS (see nginx/opdesk.conf.example).
+    network_mode: host
+    # The backend reads its configuration from the environment (env_file) or from backend/.env.
+    env_file:
+      - .env
+    environment:
+      - OPDESK_BIND_HOST=127.0.0.1
+      - HTTPS_CERT=
+      - HTTPS_KEY=
+    # Stop gracefully: Nest's shutdown hooks close AMI, DB pools and WebSockets.
+    stop_grace_period: 30s
+    volumes:
+      # Call recordings: playback, download, and deletion by the retention job.
+      - /var/spool/asterisk/monitor:/var/spool/asterisk/monitor
+      # Mobile push credentials (FCM service account, APNs .p8), if used.
+      - ./secrets:/opt/opdesk/secrets:ro
