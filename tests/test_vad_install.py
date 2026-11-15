@@ -51,14 +51,15 @@ class VadInstallTests(unittest.TestCase):
         patcher = mock.patch.object(os, 'chown', create=True)
         self.chown = patcher.start()
         self.addCleanup(patcher.stop)
-        # Windows does not expose POSIX ownership or group-write semantics. Keep
-        # those metadata checks deterministic here; Linux runs the real lstat.
-        if os.name == 'nt':
+        # chown is a fake: non-root test runners need the resulting root UID
+        # represented too. Windows additionally lacks POSIX mode semantics.
+        if os.name == 'nt' or os.getuid() != 0:
             real_lstat = Path.lstat
             def posix_lstat(path):
                 value = real_lstat(path)
                 if str(path).startswith(str(self.base)):
-                    fields = list(value); fields[0] &= ~0o022; fields[4] = 0
+                    fields = list(value); fields[4] = 0
+                    if os.name == 'nt': fields[0] &= ~0o022
                     return os.stat_result(fields)
                 return value
             patcher = mock.patch.object(Path, 'lstat', posix_lstat)

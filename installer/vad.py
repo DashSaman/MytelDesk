@@ -54,6 +54,12 @@ def _service_user(user):
     return user
 
 
+def _trusted_owner(path):
+    info = Path(path).lstat()
+    if info.st_uid != 0 or (not stat.S_ISLNK(info.st_mode) and info.st_mode & 0o022):
+        raise ValueError('VAD runtime must be root-owned and not group/world writable')
+
+
 def _load_spec(bundle):
     source = _no_parent_links(Path(bundle) / 'backend/vad')
     manifest = source / 'runtime.json'
@@ -118,10 +124,12 @@ def _run(run, argv, **kwargs):
     return result
 
 
-def _check_tree(root):
+def _check_tree(root, trusted=False):
+    if trusted: _trusted_owner(root)
     for parent, directories, files in os.walk(str(root), followlinks=False):
         for name in directories + files:
             item = Path(parent) / name
+            if trusted: _trusted_owner(item)
             if item.is_symlink():
                 try:
                     item.resolve().relative_to(root.resolve())
@@ -161,6 +169,9 @@ def ensure_vad(bundle, runtime_root, run, fetch_verified, service_user='asterisk
     _service_user(service_user)
     runtime_root = _no_parent_links(runtime_root)
     source, spec, requirements, fingerprint = _load_spec(bundle)
+    if runtime_root.exists():
+        if not runtime_root.is_dir(): raise ValueError('VAD runtime root is not a directory')
+        _trusted_owner(runtime_root)
     generation = runtime_root / ('py311-' + fingerprint[:24])
     python = generation / 'venv/bin/python'
     model = generation / 'models' / spec['model']['filename']
@@ -168,9 +179,12 @@ def ensure_vad(bundle, runtime_root, run, fetch_verified, service_user='asterisk
                    'VAD_MODEL_SHA256': spec['model']['sha256']}
     if generation.exists():
         _no_parent_links(generation)
-        _check_tree(generation)
+        _check_tree(generation, trusted=True)
+        marker_path = generation / MARKER
+        if marker_path.is_symlink():
+            raise ValueError('VAD ownership record must not be a symlink')
         try:
-            marker = json.loads((generation / MARKER).read_text(encoding='utf-8'))
+            marker = json.loads(marker_path.read_text(encoding='utf-8'))
         except (OSError, ValueError):
             raise RuntimeError('Existing VAD generation has no valid ownership record')
         if (not isinstance(marker, dict) or marker.get('owner') != 'MytelDesk' or marker.get('schema') != 1
