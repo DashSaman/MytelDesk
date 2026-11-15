@@ -324,7 +324,12 @@ def ensure_runtime(bundle):
             fetch_verified('https://nodejs.org/dist/' + pin['version'] + '/' + name + '.tar.xz', archive, pin['sha256'])
             # Official Node includes symlinks. Use tar after checksum verification;
             # extract into private temp then move only the expected top-level dir.
-            run(['tar', '-xJf', str(archive), '-C', tmp])
+            run(['tar', '--no-same-owner', '--no-same-permissions', '-xJf', str(archive), '-C', tmp])
+            unpacked = Path(tmp) / name
+            for item in [unpacked] + list(unpacked.rglob('*')):
+                if item.is_symlink(): continue
+                os.chown(str(item), 0, 0)
+                item.chmod(0o755 if item.is_dir() or item.stat().st_mode & 0o111 else 0o644)
             shutil.move(str(Path(tmp) / name), str(runtime))
     version = run([str(runtime / 'bin/node'), '--version']).stdout.strip()
     if version != pin['version']:
@@ -351,7 +356,8 @@ def default_url():
 
 
 def verify_app(password, release):
-    tables = re.findall(r'CREATE TABLE IF NOT EXISTS\s+`?([A-Za-z0-9_]+)', (release / 'backend/schema.sql').read_text())
+    tables = re.findall(r'^\s*CREATE TABLE IF NOT EXISTS\s+`?([A-Za-z0-9_]+)', (release / 'backend/schema.sql').read_text(), re.M)
+    if not tables: raise RuntimeError('Application schema has no recognized table definitions')
     present = set(mysql('SHOW TABLES;', password, 'myteldesk').splitlines())
     if set(tables) - present:
         raise RuntimeError('Application database migration incomplete')
