@@ -164,6 +164,23 @@ class VadInstallTests(unittest.TestCase):
         self.assertTrue(Path(environment['VAD_PYTHON']).is_file())
         self.assertEqual(sentinel.read_text(), 'preserve')
 
+    def test_corrupt_owned_wheel_can_resume_with_an_exclusive_download_callback(self):
+        self.pip_fail = True
+        with self.assertRaises(RuntimeError): self.provision()
+        wheel = next(self.runtime.rglob('*.whl')); wheel.write_bytes(b'interrupted download')
+        sentinel = self.runtime / 'operator-note'; sentinel.write_text('preserve')
+        self.pip_fail = False
+        downloaded = []
+        def exclusive_fetch(url, destination, digest):
+            with Path(destination).open('xb') as output:
+                output.write(self.payloads[Path(destination).name])
+            downloaded.append(Path(destination).name)
+        environment = vad.ensure_vad(self.bundle, self.runtime, self.run_command, exclusive_fetch)
+        self.assertEqual(downloaded, [wheel.name])
+        self.assertEqual(wheel.read_bytes(), self.payloads[wheel.name])
+        self.assertEqual(sentinel.read_text(), 'preserve')
+        self.assertTrue(Path(environment['VAD_PYTHON']).is_file())
+
     def test_missing_or_changed_bundled_model_fails_before_host_commands(self):
         model = self.sources / 'models/silero_vad.onnx'
         for value in (None, b'changed'):
