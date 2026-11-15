@@ -74,7 +74,9 @@ class AnalysisTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {}, clear=True):
             model = analysis._ensure_silero_model()
             self.assertEqual(hashlib.sha256(model.read_bytes()).hexdigest(), analysis._runtime_spec()['model']['sha256'])
-        for environment in ({'VAD_MODEL_PATH': 'relative.onnx', 'VAD_MODEL_SHA256': 'a' * 64},
+        pinned = analysis._runtime_spec()['model']['sha256']
+        for environment in ({'VAD_MODEL_PATH': 'relative.onnx', 'VAD_MODEL_SHA256': pinned},
+                            {'VAD_MODEL_PATH': str(model.parent / '..' / 'model.onnx'), 'VAD_MODEL_SHA256': pinned},
                             {'VAD_MODEL_PATH': str(model)}, {'VAD_MODEL_SHA256': 'a' * 64}):
             with self.subTest(environment=environment), mock.patch.dict(os.environ, environment, clear=True):
                 with self.assertRaises(analysis.VadRuntimeError) as failure: analysis._ensure_silero_model()
@@ -155,6 +157,18 @@ class DoctorTests(unittest.TestCase):
                 code, result = self.invoke()
                 self.assertNotEqual(code, 0)
                 self.assertEqual(result, {'status': 'error', 'engine': 'silero', 'error_code': 'inference_failed'})
+
+    def test_repeated_doctor_probe_resets_recurrent_state_with_cached_session(self):
+        states = []
+        def infer(_names, values):
+            states.append(values['state'].copy())
+            return np.array([[0.0]], dtype=np.float32), values['state'] + 1
+        self.session.run = infer
+        self.assertEqual(self.invoke()[0], 0)
+        self.assertEqual(self.invoke()[0], 0)
+        self.assertEqual(len(states), 4)
+        for index, expected in enumerate((0, 1, 0, 1)):
+            np.testing.assert_array_equal(states[index], np.full((2, 1, 128), expected))
 
     def test_doctor_sanitizes_model_and_dependency_errors(self):
         with mock.patch.object(analysis, '_ensure_silero_model', side_effect=RuntimeError('/private/secret-path')):
