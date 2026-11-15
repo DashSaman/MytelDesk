@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import type { DependencyList } from 'react';
 import type { TFunction } from 'i18next';
 import { fetchWithAuth } from '../auth';
+import { fmtCivilDate } from '../lib/format';
 
 // ---------------------------------------------------------------------------
 // Shared date range types + helpers (used by Analytics AND Call History)
@@ -182,7 +183,7 @@ export function pctOf(part: number | null | undefined, whole: number | null | un
 
 /** The range as the cards and charts caption it: one date, or "from → to". */
 export function rangeLabel(r: DateRange): string {
-  return r.from === r.to ? r.from : `${r.from} → ${r.to}`;
+  return r.from === r.to ? fmtCivilDate(r.from) : `${fmtCivilDate(r.from)} – ${fmtCivilDate(r.to)}`;
 }
 
 /** A wait bucket's name, from its edges in seconds: "0–10s", "1–2m", "5m+". */

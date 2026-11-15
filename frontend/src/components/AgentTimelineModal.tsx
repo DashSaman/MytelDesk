@@ -1,4 +1,4 @@
-import { uiLocale } from '../lib/format';
+import { fmtCivilDate, uiLocale } from '../lib/format';
 import type { CSSProperties } from 'react';
 import type { TFunction } from 'i18next';
 import { useTranslation } from 'react-i18next';
@@ -93,8 +93,8 @@ export function AgentTimelineModal({ agent, name, dateRange, onClose }: Props) {
       headerAside={
         <span className="an-tl-period">
           {dateRange.from === dateRange.to
-            ? dateRange.from
-            : t('agent.timeline.period', '{{from}} to {{to}}', { from: dateRange.from, to: dateRange.to })}
+            ? fmtCivilDate(dateRange.from)
+            : t('agent.timeline.period', '{{from}} to {{to}}', { from: fmtCivilDate(dateRange.from), to: fmtCivilDate(dateRange.to) })}
         </span>
       }
       footer={<button type="button" className="btn" onClick={onClose}>{t('common.close', 'Close')}</button>}

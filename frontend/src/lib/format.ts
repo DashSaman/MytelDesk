@@ -1,3 +1,5 @@
+import { civilParts, formatPersianDate } from './persianDate';
+
 /**
  * A length of time as a clock: `mm:ss`, or `hh:mm:ss` from one hour up.
  *
@@ -47,6 +49,23 @@ export function parseClock(s: string | null | undefined): number {
  */
 export function uiLocale(): string {
   return typeof document === 'undefined' ? 'en' : document.documentElement.lang || 'en';
+}
+
+/** A date without a time zone; never parse an ISO day as local/UTC midnight. */
+export function fmtCivilDate(value: string, short = false): string {
+  const parts = civilParts(value);
+  if (!parts) return value;
+  if (uiLocale().startsWith('fa')) {
+    const formatted = formatPersianDate(value) || value;
+    return short ? formatted.slice(formatted.indexOf('/') + 1) : formatted;
+  }
+  return new Intl.DateTimeFormat(uiLocale(), { ...(short ? {} : { year: 'numeric' as const }), month: 'short', day: 'numeric', timeZone: 'UTC' }).format(new Date(`${value}T12:00:00Z`));
+}
+
+/** Translate API weekday names while keeping the server's row order. */
+export function fmtWeekday(value: string): string {
+  const index = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'].indexOf(value.slice(0, 3).toLowerCase());
+  return index < 0 ? value : new Intl.DateTimeFormat(uiLocale(), { weekday: 'short', timeZone: 'UTC' }).format(new Date(Date.UTC(2026, 10, 15 + index, 12)));
 }
 
 /** Full date/time for records. Persian follows the Persian calendar; API values stay ISO. */

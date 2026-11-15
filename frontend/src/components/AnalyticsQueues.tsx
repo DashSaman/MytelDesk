@@ -1,4 +1,5 @@
 import { Fragment, useMemo, useState } from 'react';
+import { fmtCivilDate, fmtWeekday } from '../lib/format';
 import type React from 'react';
 import { useTranslation } from 'react-i18next';
 import {
@@ -24,11 +25,11 @@ function Heatmap({ data }: HeatmapProps) {
   const allValues = matrix.flat();
   const maxVal = Math.max(...allValues, 1);
 
-  const dayLabels = labels.days;
+  const dayLabels = labels.days.map(fmtWeekday);
   const hourLabels = labels.hours.map((h, i) => i % 3 === 0 ? h.slice(0, 2) : '');
 
   return (
-    <div className="an-heatmap">
+    <div className="an-heatmap" tabIndex={0} role="region" aria-label={t('analytics.queues.heatmapTitle')}>
       <div className="an-heatmap-grid">
         {/* Header row */}
         <div className="an-heatmap-day-label" />
@@ -128,7 +129,7 @@ export function AnalyticsQueues({ dateRange }: Props) {
       }
     }
     return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date))
-      .map((d) => ({ ...d, label: d.date.slice(5) }));
+      .map((d) => ({ ...d, label: fmtCivilDate(d.date, true) }));
   }, [picked]);
   // Every queue reports the same buckets, so summing is bucket by bucket.
   const waits = useMemo(() => {

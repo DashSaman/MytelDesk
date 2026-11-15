@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next';
+import { fmtCivilDate } from '../lib/format';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip as ChartTooltip, CartesianGrid, Legend, ResponsiveContainer,
 } from 'recharts';
@@ -182,7 +183,7 @@ export function AnalyticsOverview({ dateRange }: Props) {
   const outbound = t('direction.outbound', 'Outbound');
   const internal = t('direction.internal', 'Internal');
   const byDay = trend.map((p) => ({
-    date: p.date.slice(5),
+    date: fmtCivilDate(p.date, true),
     inbound: p.total_calls,
     outbound: p.outbound_total ?? 0,
     internal: p.internal_total ?? 0,

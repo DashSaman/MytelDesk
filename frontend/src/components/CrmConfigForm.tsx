@@ -635,11 +635,11 @@ export function CrmSettings({ card, onLoaded }: CrmSettingsProps) {
 
                   {config.auth_type === 'api_key' && (
                     <FormRow>
-                      <FormField label={t('settings.crm.apiKey')}>
-                        <input {...secretProps('api_key', t('settings.crm.apiKeyPh', 'Your API key'))} />
+                      <FormField htmlFor="crm-api_key" label={t('settings.crm.apiKey')}>
+                        <input id="crm-api_key" {...secretProps('api_key', t('settings.crm.apiKeyPh', 'Your API key'))} />
                       </FormField>
-                      <FormField label={t('settings.crm.apiKeyHeader')} hint={t('settings.crm.defaultApiKeyHeader')}>
-                        <input type="text" className="form-input" placeholder="X-API-Key" value={config.api_key_header || ''}
+                      <FormField htmlFor="crm-api_key_header" label={t('settings.crm.apiKeyHeader')} hint={t('settings.crm.defaultApiKeyHeader')}>
+                        <input id="crm-api_key_header" type="text" className="form-input" placeholder="X-API-Key" value={config.api_key_header || ''}
                           onChange={(e) => updateConfig({ api_key_header: e.target.value })} />
                       </FormField>
                     </FormRow>
@@ -647,20 +647,20 @@ export function CrmSettings({ card, onLoaded }: CrmSettingsProps) {
 
                   {config.auth_type === 'basic_auth' && (
                     <FormRow>
-                      <FormField label={t('settings.crm.username')}>
-                        <input type="text" className="form-input" placeholder={t('fields.username', 'Username')}
+                      <FormField htmlFor="crm-username" label={t('settings.crm.username')}>
+                        <input id="crm-username" type="text" className="form-input" placeholder={t('fields.username', 'Username')}
                           value={config.username || ''} onChange={(e) => updateConfig({ username: e.target.value })} />
                       </FormField>
-                      <FormField label={t('settings.crm.password')}>
-                        <input {...secretProps('password', t('fields.password', 'Password'))} />
+                      <FormField htmlFor="crm-password" label={t('settings.crm.password')}>
+                        <input id="crm-password" {...secretProps('password', t('fields.password', 'Password'))} />
                       </FormField>
                     </FormRow>
                   )}
 
                   {config.auth_type === 'bearer_token' && (
                     <FormRow single>
-                      <FormField label={t('settings.crm.bearerToken')}>
-                        <input {...secretProps('bearer_token', t('settings.crm.bearerTokenPh', 'Your bearer token'))} />
+                      <FormField htmlFor="crm-bearer_token" label={t('settings.crm.bearerToken')}>
+                        <input id="crm-bearer_token" {...secretProps('bearer_token', t('settings.crm.bearerTokenPh', 'Your bearer token'))} />
                       </FormField>
                     </FormRow>
                   )}
@@ -668,21 +668,21 @@ export function CrmSettings({ card, onLoaded }: CrmSettingsProps) {
                   {config.auth_type === 'oauth2' && (
                     <>
                       <FormRow>
-                        <FormField label={t('settings.crm.clientId')}>
-                          <input type="text" className="form-input" placeholder={t('settings.crm.clientIdPh', 'OAuth2 Client ID')}
+                        <FormField htmlFor="crm-oauth2_client_id" label={t('settings.crm.clientId')}>
+                          <input id="crm-oauth2_client_id" type="text" className="form-input" placeholder={t('settings.crm.clientIdPh', 'OAuth2 Client ID')}
                             value={config.oauth2_client_id || ''} onChange={(e) => updateConfig({ oauth2_client_id: e.target.value })} />
                         </FormField>
-                        <FormField label={t('settings.crm.clientSecret')}>
-                          <input {...secretProps('oauth2_client_secret', t('settings.crm.clientSecretPh', 'OAuth2 Client Secret'))} />
+                        <FormField htmlFor="crm-oauth2_client_secret" label={t('settings.crm.clientSecret')}>
+                          <input id="crm-oauth2_client_secret" {...secretProps('oauth2_client_secret', t('settings.crm.clientSecretPh', 'OAuth2 Client Secret'))} />
                         </FormField>
                       </FormRow>
                       <FormRow>
-                        <FormField label={t('settings.crm.tokenUrl')}>
-                          <input type="text" className="form-input" dir="ltr" placeholder="https://crm.example.com/oauth/token"
+                        <FormField htmlFor="crm-oauth2_token_url" label={t('settings.crm.tokenUrl')}>
+                          <input id="crm-oauth2_token_url" type="text" className="form-input" dir="ltr" placeholder="https://crm.example.com/oauth/token"
                             value={config.oauth2_token_url || ''} onChange={(e) => updateConfig({ oauth2_token_url: e.target.value })} />
                         </FormField>
-                        <FormField label={t('settings.crm.scope')}>
-                          <input type="text" className="form-input" placeholder="read write"
+                        <FormField htmlFor="crm-oauth2_scope" label={t('settings.crm.scope')}>
+                          <input id="crm-oauth2_scope" type="text" className="form-input" placeholder="read write"
                             value={config.oauth2_scope || ''} onChange={(e) => updateConfig({ oauth2_scope: e.target.value })} />
                         </FormField>
                       </FormRow>
@@ -691,12 +691,12 @@ export function CrmSettings({ card, onLoaded }: CrmSettingsProps) {
 
                   <AdvancedSection label={t('settings.crm.advancedOptions')}>
                     <FormRow>
-                      <FormField label={t('settings.crm.endpointPath')}>
-                        <input type="text" className="form-input" dir="ltr" placeholder="/api/calls" value={config.endpoint_path || ''}
+                      <FormField htmlFor="crm-endpoint_path" label={t('settings.crm.endpointPath')}>
+                        <input id="crm-endpoint_path" type="text" className="form-input" dir="ltr" placeholder="/api/calls" value={config.endpoint_path || ''}
                           onChange={(e) => updateConfig({ endpoint_path: e.target.value })} />
                       </FormField>
-                      <FormField label={t('settings.crm.timeout')}>
-                        <input type="number" className="form-input" placeholder="30" value={config.timeout || 30} min={1} max={300}
+                      <FormField htmlFor="crm-timeout" label={t('settings.crm.timeout')}>
+                        <input id="crm-timeout" type="number" className="form-input" placeholder="30" value={config.timeout || 30} min={1} max={300}
                           onChange={(e) => updateConfig({ timeout: parseInt(e.target.value) || 30 })} />
                       </FormField>
                     </FormRow>

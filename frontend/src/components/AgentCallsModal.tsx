@@ -4,7 +4,7 @@ import { Activity, ArrowUpDown, PhoneCall, Users } from 'lucide-react';
 import type { AgentCallRecord, AgentCallsDirection, AgentCallsResponse } from '../types';
 import type { DateRange } from './analyticsUtils';
 import { fmtSecs, buildDateParams, analyticsGet, useAnalyticsFetch } from './analyticsUtils';
-import { fmtDateTime } from '../lib/format';
+import { fmtCivilDate, fmtDateTime } from '../lib/format';
 import { presentOptions, showFilter } from '../lib/filters';
 import { CALL_STATUS_ORDER, callStatusColor, callStatusLabel } from './callStatus';
 import { CallStatusBadge } from './CallStatusBadge';
@@ -125,8 +125,8 @@ export function AgentCallsModal({ agent, name, dateRange, onClose }: Props) {
       headerAside={
         <span className="an-tl-period">
           {dateRange.from === dateRange.to
-            ? dateRange.from
-            : t('agent.timeline.period', '{{from}} to {{to}}', { from: dateRange.from, to: dateRange.to })}
+            ? fmtCivilDate(dateRange.from)
+            : t('agent.timeline.period', '{{from}} to {{to}}', { from: fmtCivilDate(dateRange.from), to: fmtCivilDate(dateRange.to) })}
         </span>
       }
       footer={<button type="button" className="btn" onClick={onClose}>{t('common.close', 'Close')}</button>}
