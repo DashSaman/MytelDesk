@@ -10,6 +10,7 @@ from pathlib import Path
 import re
 import shutil
 import stat
+import subprocess
 import tempfile
 from urllib.parse import urlsplit
 
@@ -202,7 +203,13 @@ def ensure_vad(bundle, runtime_root, run, fetch_verified, service_user='asterisk
     except OSError:
         available = None
     if available is None or available.returncode:
-        _run(run, ['dnf', '-y', 'install', 'python3.11', 'python3.11-pip'], timeout=900)
+        try:
+            _run(run, ['dnf', '-y', '--disablerepo=*', '--enablerepo=baseos', '--enablerepo=appstream',
+                       '--setopt=timeout=30', '--setopt=retries=2',
+                       'install', 'python3.11', 'python3.11-pip'], timeout=900)
+        except (OSError, RuntimeError, subprocess.TimeoutExpired):
+            raise RuntimeError('VAD could not install parallel Python 3.11 from Rocky BaseOS/AppStream. '
+                               'Check that these repositories are reachable and contain python3.11 and python3.11-pip.') from None
         available = _run(run, [PYTHON, '--version'], timeout=30)
     if not re.fullmatch(r'Python 3\.11\.[0-9]+', available.stdout.strip()):
         raise RuntimeError('VAD requires the parallel Python 3.11 interpreter')
