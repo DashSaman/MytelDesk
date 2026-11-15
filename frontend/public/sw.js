@@ -22,7 +22,20 @@ self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()));
 
 const CALL_TAG = 'opdesk-incoming-call';
-const ICON = '/favicon.svg';
+const APP_URL = new URL(self.registration.scope);
+const ICON = new URL('favicon.svg', APP_URL).href;
+
+// A panel or another application on this PBX is not a desk notification target.
+async function appClients() {
+  const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+  return clients.filter((client) => {
+    try {
+      const url = new URL(client.url);
+      return url.origin === APP_URL.origin &&
+        (url.pathname === APP_URL.pathname.replace(/\/$/, '') || url.pathname.startsWith(APP_URL.pathname));
+    } catch (_error) { return false; }
+  });
+}
 
 // --- Web Push: incoming-call wake + banner alerts ---------------------------
 self.addEventListener('push', (event) => {
@@ -36,7 +49,7 @@ self.addEventListener('push', (event) => {
   if (data.type === 'incoming_call') {
     const caller = data.display_name || data.caller || '';
     event.waitUntil((async () => {
-      const clientList = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+      const clientList = await appClients();
       for (const client of clientList) {
         client.postMessage({ type: 'opdesk:incoming-call', payload: data });
       }
@@ -61,7 +74,7 @@ self.addEventListener('push', (event) => {
 
   // Generic banner (missed call, etc.)
   event.waitUntil((async () => {
-    const clientList = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    const clientList = await appClients();
     for (const client of clientList) {
       client.postMessage({ type: 'opdesk:incoming-call', payload: data });
     }
@@ -78,7 +91,7 @@ self.addEventListener('push', (event) => {
 // re-subscribe endpoint needs the signed-in session, which only the app has).
 self.addEventListener('pushsubscriptionchange', (event) => {
   event.waitUntil((async () => {
-    const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    const clients = await appClients();
     for (const client of clients) {
       client.postMessage({ type: 'opdesk:resubscribe' });
     }
@@ -93,7 +106,7 @@ self.addEventListener('notificationclick', (event) => {
   if (event.action === 'decline') return;
 
   event.waitUntil((async () => {
-    const clientList = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    const clientList = await appClients();
     const action = event.action === 'answer' ? 'answer' : 'open';
     for (const client of clientList) {
       if ('focus' in client) {
@@ -101,6 +114,6 @@ self.addEventListener('notificationclick', (event) => {
         return client.focus();
       }
     }
-    if (self.clients.openWindow) return self.clients.openWindow('/');
+    if (self.clients.openWindow) return self.clients.openWindow(APP_URL.href);
   })());
 });

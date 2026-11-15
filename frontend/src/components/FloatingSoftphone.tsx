@@ -4,6 +4,7 @@ import { Headphones, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useWebPhoneContext } from '../contexts/WebPhoneContext';
 import { Softphone } from './Softphone';
+import { isTopmostTrap, useFocusTrap, useInert } from './ui/focus';
 
 interface FloatingSoftphoneProps {
   open: boolean;
@@ -30,7 +31,10 @@ export function FloatingSoftphone({ open, onOpenChange }: FloatingSoftphoneProps
   } = useWebPhoneContext();
 
   const wrapRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const inCall = hasActiveCall || isCallAnswered || isOutgoingRinging;
+  useInert(panelRef, !open);
+  useFocusTrap(panelRef, open);
 
   // Auto-open the popover when a call comes in (replaces the old tab redirect).
   useEffect(() => {
@@ -41,7 +45,11 @@ export function FloatingSoftphone({ open, onOpenChange }: FloatingSoftphoneProps
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !incomingCall) onOpenChange(false);
+      if (e.key === 'Escape' && !incomingCall && isTopmostTrap(panelRef.current)) {
+        e.preventDefault();
+        e.stopPropagation();
+        onOpenChange(false);
+      }
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
@@ -84,8 +92,10 @@ export function FloatingSoftphone({ open, onOpenChange }: FloatingSoftphoneProps
 
       {/* Popover stays mounted; we animate opacity/transform so the audio element survives. */}
       <motion.div
+        ref={panelRef}
         className="softphone-popover"
         role="dialog"
+        tabIndex={-1}
         aria-label={t('softphone.title')}
         aria-hidden={!open}
         initial={false}

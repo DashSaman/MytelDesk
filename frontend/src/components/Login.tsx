@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { setToken, setUser } from '../auth';
 import { ThemeToggle } from './ThemeToggle';
 import { messageFrom } from '../lib/api';
+import { appPath } from '../lib/app-url';
 import { Alert, Card, FormField, FormRow } from './ui';
 
 type Props = {
@@ -34,9 +35,8 @@ export function Login({ onSuccess }: Props) {
     }
     setLoading(true);
     try {
-      const MTB = (import.meta.env.BASE_URL || '/').replace(/\/$/, '');
       const endpoint = source === 'panel' ? '/api/auth/login-panel' : '/api/auth/login';
-      const res = await fetch(MTB + endpoint, {
+      const res = await fetch(appPath(endpoint), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ login: login.trim(), password }),

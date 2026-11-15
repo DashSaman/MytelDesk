@@ -59,6 +59,7 @@ import {
 import type { LucideIcon } from 'lucide-react';
 import { ThemeToggle } from './components/ThemeToggle';
 import { Badge, EmptyState, Tabs } from './components/ui';
+import { isTopmostTrap, useFocusTrap, useInert } from './components/ui/focus';
 import { CallStatusBadge } from './components/CallStatusBadge';
 import { callStatusLabel, isCallStatus } from './components/callStatus';
 import { memberExtension } from './components/queueMemberState';
@@ -253,6 +254,30 @@ function App({ onLogout }: AppProps) {
   const [dateRange, setDateRange] = useState<DateRange>(() => quickRanges()['30d']);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [mobileLayout, setMobileLayout] = useState(() => window.matchMedia('(max-width: 768px)').matches);
+  const sidebarRef = useRef<HTMLElement>(null);
+  useInert(sidebarRef, mobileLayout && !mobileNavOpen);
+  useFocusTrap(sidebarRef, mobileLayout && mobileNavOpen);
+  useEffect(() => {
+    const media = window.matchMedia('(max-width: 768px)');
+    const update = () => {
+      setMobileLayout(media.matches);
+      if (!media.matches) setMobileNavOpen(false);
+    };
+    media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
+  }, []);
+  useEffect(() => {
+    if (!mobileLayout || !mobileNavOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || !isTopmostTrap(sidebarRef.current)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setMobileNavOpen(false);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [mobileLayout, mobileNavOpen]);
   const [floatingPhoneOpen, setFloatingPhoneOpen] = useState(false);
   /** User form preserved when switching to Groups to create a new group (no API call). */
   const [pendingUserForm, setPendingUserForm] = useState<PendingUserFormSnapshot | null>(null);
@@ -902,7 +927,8 @@ function App({ onLogout }: AppProps) {
         )}
 
         {/* ── Sidebar ── */}
-        <aside className={`sidebar${sidebarCollapsed ? ' collapsed' : ''}${mobileNavOpen ? ' open' : ''}`}>
+        <aside ref={sidebarRef} tabIndex={-1} aria-hidden={mobileLayout && !mobileNavOpen ? true : undefined}
+          className={`sidebar${sidebarCollapsed ? ' collapsed' : ''}${mobileNavOpen ? ' open' : ''}`}>
           <nav className="sidebar-nav" aria-label={t('nav.main', 'Main navigation')}>
             {navGroups.map((g, gi) => (
               <div key={g.key} className="sidebar-section">

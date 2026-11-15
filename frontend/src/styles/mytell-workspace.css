@@ -1,7 +1,7 @@
 /* MyTellDesk v7.4: a signal workspace, not a collection of unrelated skins. */
 @font-face {
   font-family: 'MyTell Vazirmatn';
-  src: url('/themes/mytel/fonts/vazirmatn/Vazirmatn-var.woff2') format('woff2');
+  src: url('/fonts/Vazirmatn-var.woff2') format('woff2');
   font-style: normal;
   font-weight: 100 900;
   font-display: swap;

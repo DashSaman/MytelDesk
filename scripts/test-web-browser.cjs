@@ -1,4 +1,5 @@
-/* Native React app served by local Vite. All API/socket traffic uses synthetic
+/* Native React app served by local Vite (or its build with MT_WEB_PRODUCTION=1).
+   All API/socket traffic uses synthetic
    fixtures; no target PBX, credentials, microphone or telephone is contacted. */
 'use strict';
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),os=require('node:os');
@@ -9,10 +10,10 @@ const frontend=path.resolve(__dirname,'../frontend');
 const requireFrontend=createRequire(path.join(frontend,'package.json'));
 const out=process.env.MT_WEB_OUTPUT?path.resolve(process.env.MT_WEB_OUTPUT):fs.mkdtempSync(path.join(os.tmpdir(),'myteldesk-web-'));
 fs.mkdirSync(out,{recursive:true});
-const result={scope:'local actual React components with synthetic API/WS state',cases:[],errors:[],blockedExternal:[]};
+const result={scope:'local actual React components with synthetic API/WS state',build:process.env.MT_WEB_PRODUCTION==='1'?'production':'development',cases:[],errors:[],blockedExternal:[]};
 const user={id:1,username:'fixture-admin',name:'Fixture Admin',role:'admin',extension:null,monitor_modes:['listen']};
 const state={extensions:{},active_calls:{},queues:{},queue_members:{},queue_entries:{},agent_states:{},stats:{total_extensions:0,online_extensions:0,total_queues:0,total_waiting:0,active_calls_count:0}};
-let server,browser,origin;
+let server,previewServer,browser,origin;
 function persist(){fs.writeFileSync(path.join(out,'results.json'),JSON.stringify(result,null,2)+'\n');}
 async function check(name,body){try{await body();result.cases.push({name,pass:true});console.log('PASS '+name);}catch(e){result.cases.push({name,pass:false,error:e.message});console.log('FAIL '+name+': '+e.message);}persist();}
 function responseFor(pathname){
@@ -72,8 +73,13 @@ async function hiddenTabStops(page,kind){
  await check('default build base is the standalone desk path',async()=>{
   const config=await vite.resolveConfig({root:frontend,configFile:path.join(frontend,'vite.config.ts')},'build');assert.equal(config.base,'/MytellDesk/');
  });
- server=await vite.createServer({root:frontend,configFile:false,base:'/MytellDesk/',plugins:[react()],logLevel:'error',server:{host:'127.0.0.1',port:0,hmr:false}});
- await server.listen();origin='http://127.0.0.1:'+server.httpServer.address().port;
+ if(process.env.MT_WEB_PRODUCTION==='1'){
+  previewServer=await vite.preview({root:frontend,configFile:false,base:'/MytellDesk/',logLevel:'error',preview:{host:'127.0.0.1',port:0}});
+  origin='http://127.0.0.1:'+previewServer.httpServer.address().port;
+ }else{
+  server=await vite.createServer({root:frontend,configFile:false,base:'/MytellDesk/',plugins:[react()],logLevel:'error',server:{host:'127.0.0.1',port:0,hmr:false}});
+  await server.listen();origin='http://127.0.0.1:'+server.httpServer.address().port;
+ }
  browser=await chromium.launch({headless:true,...(process.env.MT_TEST_BROWSER==='chromium'?{}:{channel:process.env.MT_TEST_BROWSER||'chrome'})});
  await check('closed dialer controls are skipped by Tab',()=>withPage(async page=>{assert.deepEqual(await hiddenTabStops(page,'phone'),[]);}));
  await check('closed mobile drawer controls are skipped by Tab',()=>withPage(async page=>{assert.deepEqual(await hiddenTabStops(page,'sidebar'),[]);}));
@@ -126,4 +132,7 @@ async function hiddenTabStops(page,kind){
  if(result.blockedExternal.length)throw new Error('Fixture attempted an external request');
  console.log(JSON.stringify({pass:result.cases.filter(x=>x.pass).length,total:result.cases.length,output:out}));
  process.exitCode=result.cases.some(x=>!x.pass)?1:0;
-})().catch(e=>{result.setupError=e.message;process.exitCode=2;console.error(e);}).finally(async()=>{persist();await browser?.close();await server?.close();});
+})().catch(e=>{result.setupError=e.message;process.exitCode=2;console.error(e);}).finally(async()=>{
+ persist();await browser?.close();await server?.close();
+ if(previewServer)await new Promise(resolve=>previewServer.httpServer.close(resolve));
+});

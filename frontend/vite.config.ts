@@ -1,6 +1,7 @@
 import { defineConfig, Plugin } from 'vite'
 import fs from 'node:fs'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import react from '@vitejs/plugin-react'
 
 // Plugin to suppress ECONNREFUSED errors from WebSocket proxy
@@ -89,7 +90,8 @@ function suppressWsProxyErrors(): Plugin {
 }
 
 // Use project cert/ for HTTPS (same cert as generate-ssl-cert.sh)
-const certDir = path.resolve(__dirname, '../cert')
+const configDir = path.dirname(fileURLToPath(import.meta.url))
+const certDir = path.resolve(configDir, '../cert')
 const httpsConfig: { key: Buffer; cert: Buffer } | undefined = (() => {
   try {
     const key = fs.readFileSync(path.join(certDir, 'opdesk_key.pem'))
@@ -101,7 +103,7 @@ const httpsConfig: { key: Buffer; cert: Buffer } | undefined = (() => {
 })()
 
 export default defineConfig({
-  base: '/opdesk/',
+  base: '/MytellDesk/',
   plugins: [
     react(),
     suppressWsProxyErrors(),
@@ -110,11 +112,12 @@ export default defineConfig({
     port: 3000,
     ...(httpsConfig && { https: httpsConfig }),
     proxy: {
-      '/ws': {
+      '/MytellDesk/ws': {
         target: 'ws://localhost:8765',
         ws: true,
         changeOrigin: true,
         secure: false,
+        rewrite: (requestPath) => requestPath.replace(/^\/MytellDesk/, ''),
         configure: (proxy, _options) => {
           const emitter = proxy as unknown as { on(event: string, handler: (...args: any[]) => void): void }
           emitter.on('error', (err: any, _req, _res) => {
@@ -161,10 +164,11 @@ export default defineConfig({
           })
         },
       },
-      '/api': {
+      '/MytellDesk/api': {
         target: 'http://localhost:8765',
         changeOrigin: true,
         secure: false,
+        rewrite: (requestPath) => requestPath.replace(/^\/MytellDesk/, ''),
       },
     },
   },

@@ -233,6 +233,7 @@
   --z-sticky:    10;    /* sticky table headers */
   --z-menu:      20;    /* inline menus anchored in a bar */
   --z-menu-high: 30;
+  --z-login-control: 60;
   --z-header:   100;    /* the app header */
   --z-header-mobile: 110;
   --z-overlay: 1000;    /* modal backdrops, incoming-call overlay */
@@ -496,7 +497,7 @@
 }
 
 /* MyTellPBX: Vazirmatn local font (fa) */
-@font-face{font-family:"Vazirmatn";src:url("/opdesk/fonts/Vazirmatn-Regular.woff2") format("woff2");font-weight:400;font-display:swap}
-@font-face{font-family:"Vazirmatn";src:url("/opdesk/fonts/Vazirmatn-Medium.woff2") format("woff2");font-weight:500;font-display:swap}
-@font-face{font-family:"Vazirmatn";src:url("/opdesk/fonts/Vazirmatn-SemiBold.woff2") format("woff2");font-weight:600;font-display:swap}
-@font-face{font-family:"Vazirmatn";src:url("/opdesk/fonts/Vazirmatn-Bold.woff2") format("woff2");font-weight:700;font-display:swap}
+@font-face{font-family:"Vazirmatn";src:url("/fonts/Vazirmatn-Regular.woff2") format("woff2");font-weight:400;font-display:swap}
+@font-face{font-family:"Vazirmatn";src:url("/fonts/Vazirmatn-Medium.woff2") format("woff2");font-weight:500;font-display:swap}
+@font-face{font-family:"Vazirmatn";src:url("/fonts/Vazirmatn-SemiBold.woff2") format("woff2");font-weight:600;font-display:swap}
+@font-face{font-family:"Vazirmatn";src:url("/fonts/Vazirmatn-Bold.woff2") format("woff2");font-weight:700;font-display:swap}

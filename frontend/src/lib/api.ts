@@ -21,13 +21,11 @@
  */
 import { getToken, removeToken } from '../auth';
 import { CODE_FA, MSG_FA, looksEnglish } from './errors-fa';
+import { appPath } from './app-url';
 
 export type Severity = 'info' | 'warning' | 'error' | 'critical';
 
 /** One entry of the Rule 4.1 `fields` array. `path` matches a control's `name`. */
-/** MyTellPBX integration: sub-path base (trailing slash stripped). */
-const MTELLPBX_BASE = (import.meta.env.BASE_URL || '/').replace(/\/$/, '');
-
 export interface ApiFieldError {
   path: string;
   code: string;
@@ -134,17 +132,17 @@ export interface RequestOptions extends Omit<RequestInit, 'body'> {
 async function request(path: string, opts: RequestOptions = {}): Promise<unknown> {
   const { body, anonymous, headers, ...rest } = opts;
 
-  const h: Record<string, string> = { ...(headers as Record<string, string>) };
+  const h = new Headers(headers);
   if (!anonymous) {
     const token = getToken();
-    if (token) h.Authorization = `Bearer ${token}`;
+    if (token) h.set('Authorization', `Bearer ${token}`);
   }
   const isForm = typeof FormData !== 'undefined' && body instanceof FormData;
-  if (body !== undefined && !isForm) h['Content-Type'] = 'application/json';
+  if (body !== undefined && !isForm) h.set('Content-Type', 'application/json');
 
   let res: Response;
   try {
-    res = await fetch(MTELLPBX_BASE + path, {
+    res = await fetch(appPath(path), {
       ...rest,
       headers: h,
       body: body === undefined ? undefined : isForm ? (body as FormData) : JSON.stringify(body),
@@ -171,15 +169,18 @@ async function request(path: string, opts: RequestOptions = {}): Promise<unknown
     if (res.ok) return null;
   }
 
-  const ctype = res.headers.get('content-type') || '';
+  const ctype = (res.headers.get('content-type') || '').toLowerCase();
   let parsed: unknown = null;
-  if (ctype.includes('json')) {
+  const raw = await res.text();
+  if (res.ok && !raw.trim()) return null;
+  if (ctype.includes('json') && raw.trim()) {
     try {
-      parsed = await res.json();
+      parsed = JSON.parse(raw);
     } catch {
-      parsed = null;
+      throw clientError(CLIENT_CODES.MALFORMED,
+        `The server returned an unexpected response (HTTP ${res.status}).`, res.status >= 500);
     }
-  } else if (!res.ok) {
+  } else {
     // A proxy or the SPA catch-all served HTML for an API path. Do not surface
     // markup to the user; map it into the same code space as everything else.
     throw clientError(CLIENT_CODES.MALFORMED,

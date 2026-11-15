@@ -5,6 +5,7 @@ import App from './App'
 import { Login } from './components/Login'
 import { getToken, removeToken } from './auth'
 import { rlog } from './lib/remoteLog'
+import { appPath } from './lib/app-url'
 import './i18n'
 import './styles/variables.css'
 import './styles/index.css'
@@ -44,7 +45,7 @@ function Root() {
 // a failure here must never block the app.
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js')
+    navigator.serviceWorker.register(appPath('/sw.js'), { scope: appPath('/') })
       .then((reg) => rlog('sw', `registered scope=${reg.scope}`))
       .catch((e) => rlog('sw', `register failed: ${String(e)}`));
   });

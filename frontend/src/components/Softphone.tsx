@@ -366,6 +366,7 @@ export function Softphone() {
           <input
             type="text"
             className="softphone-search-input"
+            aria-label={t('softphone.enterNumber')}
             placeholder={lastDialedNumber || t('softphone.enterNumber')}
             value={dialNumber}
             onChange={(e) => setDialNumber(e.target.value.replace(/[^0-9*#+\-\s()]/g, ''))}

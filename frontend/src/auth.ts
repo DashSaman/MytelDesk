@@ -1,3 +1,5 @@
+import { apiRequestTarget } from './lib/app-url';
+
 const TOKEN_KEY = 'opdesk_token';
 const USER_KEY = 'opdesk_user';
 
@@ -101,8 +103,10 @@ export function dispatchUnauthorized(): void {
 
 /** Drop-in replacement for fetch that auto-logs out on 401. */
 export async function fetchWithAuth(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
-  const headers = { ...getAuthHeaders(), ...(init?.headers as Record<string, string> | undefined) };
-  const res = await fetch(input, { ...init, headers });
+  const headers = new Headers(input instanceof Request ? input.headers : undefined);
+  new Headers(getAuthHeaders()).forEach((value, key) => headers.set(key, value));
+  new Headers(init?.headers).forEach((value, key) => headers.set(key, value));
+  const res = await fetch(apiRequestTarget(input), { ...init, headers });
   if (res.status === 401) {
     dispatchUnauthorized();
   }

@@ -1,4 +1,4 @@
-import { useEffect, type RefObject } from 'react';
+import { useEffect, useLayoutEffect, type RefObject } from 'react';
 
 /* Focus containment for overlays. There was no trap anywhere in the codebase:
    every modal left Tab free to walk out into the page behind the scrim, where
@@ -27,8 +27,19 @@ function focusable(root: HTMLElement): HTMLElement[] {
     // collapsed <AdvancedSection> would otherwise contribute invisible tab
     // stops, which reads to a keyboard user as focus vanishing mid-cycle.
     if (el.offsetParent === null && getComputedStyle(el).position !== 'fixed') return false;
-    return el.getAttribute('aria-hidden') !== 'true';
+    return !el.closest('[inert], [aria-hidden="true"]');
   });
+}
+
+/** Hidden overlays keep their state/audio mounted but cannot receive input. */
+export function useInert(containerRef: RefObject<HTMLElement | null>, inactive: boolean) {
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const previous = container.inert;
+    container.inert = inactive;
+    return () => { container.inert = previous; };
+  }, [containerRef, inactive]);
 }
 
 /* Active traps, innermost last. A confirm dialog opened from inside an edit
