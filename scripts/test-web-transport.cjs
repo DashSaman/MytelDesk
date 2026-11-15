@@ -29,6 +29,11 @@ test('already based API paths are not double-prefixed',async()=>{
  const f=fixture('src/auth.ts');await f.api.fetchWithAuth('/MytellDesk/api/auth/me');
  assert.equal(new URL(target(f.requests[0]),origin).pathname,'/MytellDesk/api/auth/me');
 });
+test('relative API paths resolve at the application base rather than the active route',async()=>{
+ const f=fixture('src/auth.ts');f.context.window.location=new URL(origin+'/MytellDesk/settings/');
+ await f.api.fetchWithAuth('api/fixture?one=two');
+ assert.equal(new URL(target(f.requests[0]),f.context.window.location).href,origin+'/MytellDesk/api/fixture?one=two');
+});
 test('URL input uses the same application API base',async()=>{
  const f=fixture('src/auth.ts');await f.api.fetchWithAuth(new URL(origin+'/api/fixture'));
  assert.equal(new URL(target(f.requests[0]),origin).pathname,'/MytellDesk/api/fixture');
@@ -54,6 +59,11 @@ test('central API preserves based success envelopes',async()=>{
 });
 test('central API does not double-prefix an already based path',async()=>{
  const f=fixture();await f.api.api('/MytellDesk/api/fixture');assert.equal(target(f.requests[0]),'/MytellDesk/api/fixture');
+});
+test('central API accepts Headers instances without losing caller headers',async()=>{
+ const f=fixture();await f.api.api('/api/fixture',{headers:new Headers({'X-Fixture':'retained'})});
+ const headers=new Headers(f.requests[0].init.headers);assert.equal(headers.get('X-Fixture'),'retained');
+ assert.equal(headers.get('Authorization'),'Bearer fixture-token');
 });
 for(const [name,type,body] of [['HTML','text/html','<html>proxy page</html>'],['malformed JSON','application/json','{broken']]){
  test('nonempty successful '+name+' is an explicit malformed response',async()=>{
