@@ -99,6 +99,13 @@ class VadInstallLifecycle(unittest.TestCase):
         state=json.loads(self.state_file.read_text());journal=json.loads(Path(state['last_journal']).read_text())
         self.assertIn(str(self.env),[entry['path'] for entry in journal])
 
+    def test_operator_environment_changes_are_preserved_on_later_upgrade(self):
+        state=self.existing();state['owned_hashes'][str(self.env)]=mod.digest(self.env)
+        self.state_file.write_text(json.dumps(state))
+        self.env.write_text(self.env.read_text()+'OPERATOR_CHOICE=keep_this\n')
+        mod.install(self.bundle,'https://pbx.example')
+        self.assertEqual(mod.read_key_values(self.env)['OPERATOR_CHOICE'],'keep_this')
+
     def test_unusable_vad_does_not_replace_the_active_environment(self):
         self.existing();before=self.env.read_bytes();self.provision.side_effect=RuntimeError('VAD probe failed')
         with self.assertRaisesRegex(RuntimeError,'VAD probe failed'):mod.install(self.bundle,'https://pbx.example')
