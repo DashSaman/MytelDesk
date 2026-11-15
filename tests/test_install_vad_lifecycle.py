@@ -13,6 +13,7 @@ from unittest import mock
 spec=importlib.util.spec_from_file_location('install_vad_lifecycle',Path(__file__).resolve().parents[1]/'installer/install.py')
 mod=importlib.util.module_from_spec(spec);spec.loader.exec_module(mod)
 REAL_WAIT_HEALTH = mod.wait_health
+REAL_VERIFY_PROXY = mod.verify_proxy
 
 
 class VadInstallLifecycle(unittest.TestCase):
@@ -131,6 +132,82 @@ class VadInstallLifecycle(unittest.TestCase):
         self.assertEqual(self.env.read_bytes(), before)
         self.assertEqual(json.loads(self.state_file.read_text())['status'], 'ready')
         mod.wait_health.assert_called_once_with()
+
+    def install_with_real_proxy(self, mode):
+        clock = [0]; attempts = [0]; self.proxy_requests = []; self.activation_values = None
+        owner = self
+        class Connection:
+            def __init__(self, host, port, **_kwargs):
+                owner.assertEqual((host, port), ('127.0.0.1', 443))
+            def request(self, method, route, headers=None):
+                owner.assertEqual(method, 'GET'); owner.assertEqual(headers['Host'], 'pbx.example')
+                self.route = route; owner.proxy_requests.append(route)
+            def getresponse(self):
+                status = 200
+                if self.route == '/MytellDesk/health':
+                    attempts[0] += 1
+                    if owner.activation_values is None: owner.activation_values = mod.read_key_values(owner.env)
+                    if mode == 'always-404' or mode == 'first-404' and attempts[0] == 1: status = 404
+                    body = b'{"status":"ok","ami_connected":false}' if mode == 'bad-ami' else b'{"status":"ok","ami_connected":true}'
+                elif self.route == '/MytellDesk/':
+                    body = b'<html><script src="/MytellDesk/assets/fixture.js"></script></html>'
+                else:
+                    owner.assertEqual(self.route, '/MytellDesk/assets/fixture.js')
+                    status = 404 if mode == 'bad-asset' else 200
+                    body = b'window.fixture=true;'
+                return SimpleNamespace(status=status, read=lambda size=None: body if size is None else body[:size])
+            def close(self): pass
+        mod.verify_proxy.side_effect = REAL_VERIFY_PROXY
+        with mock.patch.object(mod.http.client, 'HTTPSConnection', Connection), \
+             mock.patch.object(mod.time, 'monotonic', side_effect=lambda: clock[0]), \
+             mock.patch.object(mod.time, 'sleep', side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)), \
+             mock.patch('sys.stdout', io.StringIO()) as output:
+            try:
+                mod.install(self.bundle, 'https://pbx.example')
+            finally:
+                self.proxy_elapsed = clock[0]; self.proxy_progress = output.getvalue(); self.proxy_attempts = attempts[0]
+
+    def test_activation_waits_for_apache_graceful_after_an_initial_404(self):
+        failure = None
+        try:
+            self.install_with_real_proxy('first-404')
+        except RuntimeError as error:
+            failure = error
+        self.assertIsNone(failure, 'Transient pre-graceful404 caused rollback: ' + str(failure))
+        self.assertEqual(json.loads(self.state_file.read_text())['status'], 'ready')
+        self.assertEqual(self.proxy_attempts, 2)
+        self.assertEqual(self.proxy_elapsed, 2)
+        self.assertIn('/MytellDesk/assets/fixture.js', self.proxy_requests)
+
+    def test_persistent_proxy_route_ami_or_asset_failure_is_bounded_and_rolls_back(self):
+        for mode in ['always-404', 'bad-ami', 'bad-asset']:
+            with self.subTest(mode=mode):
+                with self.assertRaises(RuntimeError): self.install_with_real_proxy(mode)
+                self.assertEqual(self.proxy_elapsed, 60)
+                self.assertGreater(self.proxy_attempts, 1)
+                self.assertIn('elapsed (limit 60s)', self.proxy_progress)
+                self.assertEqual(json.loads(self.state_file.read_text())['status'], 'prepared')
+                values = mod.read_key_values(self.env)
+                for key in ('DB_PASSWORD', 'JWT_SECRET', 'AMI_SECRET', 'OPDESK_BRIDGE_PW'):
+                    self.assertEqual(values[key], self.activation_values[key])
+                self.assertFalse(self.proxy.exists()); self.assertFalse(self.unit.exists()); self.assertFalse(self.ami.exists())
+                self.assertNotIn('Installation verified:', self.proxy_progress)
+
+    def test_doctor_proxy_failure_remains_immediate(self):
+        self.existing(); mod.verify_proxy.side_effect = RuntimeError('bad existing proxy')
+        with mock.patch.object(mod.time, 'sleep') as sleep:
+            with self.assertRaisesRegex(RuntimeError, 'bad existing proxy'): mod.doctor()
+        mod.verify_proxy.assert_called_once_with('https://pbx.example/MytellDesk/')
+        sleep.assert_not_called()
+
+    def test_same_ready_proxy_failure_remains_immediate(self):
+        self.existing(version='1.1.0', tree='a'*40)
+        mod.verify_proxy.side_effect = RuntimeError('bad existing proxy')
+        with mock.patch.object(mod.time, 'sleep') as sleep:
+            with self.assertRaisesRegex(RuntimeError, 'bad existing proxy'): mod.install(self.bundle, 'https://pbx.example')
+        mod.wait_health.assert_called_once_with(20)
+        mod.verify_proxy.assert_called_once_with('https://pbx.example/MytellDesk/')
+        sleep.assert_not_called()
 
     def test_fresh_download_failure_can_be_retried_without_manual_directory_deletion(self):
         self.provision.side_effect=[RuntimeError('temporary download failure'),self.vad]
