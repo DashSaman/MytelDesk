@@ -190,6 +190,33 @@ class VadInstallTests(unittest.TestCase):
                 with self.assertRaises(ValueError): self.provision()
                 self.assertEqual(self.calls, [])
 
+    def test_malformed_manifest_types_are_rejected_before_host_commands(self):
+        bad_model = copy.deepcopy(self.manifest); bad_model['model'] = []
+        bad_name = copy.deepcopy(self.manifest); bad_name['packages'][0]['name'] = []
+        for value in ([], None, bad_model, bad_name):
+            with self.subTest(value_type=type(value).__name__):
+                (self.sources / 'runtime.json').write_text(json.dumps(value))
+                with self.assertRaises(ValueError): self.provision()
+                self.assertEqual(self.calls, [])
+
+    def test_failed_initial_inference_probe_leaves_generation_unpublished(self):
+        self.doctor_override = {'status': 'error', 'error_code': 'inference_failed'}
+        with self.assertRaises(RuntimeError): self.provision()
+        marker = next(self.runtime.rglob('.myteldesk-vad.json'))
+        self.assertEqual(json.loads(marker.read_text())['status'], 'building')
+        self.doctor_override = None
+        environment = self.provision()
+        self.assertEqual(json.loads(marker.read_text())['status'], 'ready')
+        self.assertTrue(Path(environment['VAD_PYTHON']).is_file())
+
+    def test_malformed_ownership_record_cannot_adopt_an_existing_generation(self):
+        self.provision()
+        marker = next(self.runtime.rglob('.myteldesk-vad.json'))
+        marker.write_text('[]')
+        self.calls[:] = []
+        with self.assertRaises(RuntimeError): self.provision()
+        self.assertEqual(self.calls, [])
+
     def test_requirements_cannot_add_an_unverified_package_or_pip_option(self):
         with (self.sources / 'requirements.txt').open('a') as stream:
             stream.write('unverified-package\n--extra-index-url=https://example.com\n')
