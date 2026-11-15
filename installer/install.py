@@ -269,6 +269,10 @@ def check_managed_files(state):
         raise RuntimeError('Managed configuration inventory is missing')
     for name, expected in state['owned_hashes'].items():
         path = Path(name)
+        # Environment is operator configuration. Upgrades merge its current
+        # values; transaction/rollback journals still guard concurrent changes.
+        if path == ENV:
+            continue
         if path.is_symlink() or not path.is_file() or digest(path) != expected:
             raise RuntimeError('Managed configuration changed; reconcile shared include/service/proxy changes before upgrading')
 
