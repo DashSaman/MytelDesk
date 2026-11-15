@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "sources": [
+    {
+      "file": "http_ece-1.2.0-LICENSE.txt",
+      "source": "https://raw.githubusercontent.com/martinthomson/encrypted-content-encoding/v1.2.0/LICENSE",
+      "sha256": "717363ac0c7f0883042868db171cfed1f4b423119249eac9bce5131291017ea8"
+    },
+    {
+      "file": "saxes-5.0.1-LICENSE.txt",
+      "source": "https://raw.githubusercontent.com/lddubeau/saxes/v5.0.1/LICENSE",
+      "sha256": "0fac2374380621b22e6b50451057721a9c52935b02d16d106a9f04897f061d0e"
+    },
+    {
+      "file": "buffers-0.1.1-upstream-package.json",
+      "source": "https://raw.githubusercontent.com/bitpay/node-buffers/1b745ee35d33eb166e15ef1866073a07c6d7de87/package.json",
+      "sha256": "eb42a43d5b685e6de2f2f4a5e18a70255be72349def7eedf504b912dd908913e"
+    },
+    {
+      "file": "substack-MIT-permission.txt",
+      "source": "https://raw.githubusercontent.com/spdx/license-list-data/main/text/MIT.txt",
+      "transformation": "Standard copyright placeholder replaced by the author attribution in the original package manifests; no year asserted.",
+      "sha256": "5f24b665f671b56e575e3c27f6a1653d956e3e2967efb2c2661aeb8328db0667"
+    }
+  ],
+  "buffers_runtime_index_sha256": "97801e296ba5f3c32242f647e1daac5917e300367fed7935ab1e62f40adb1b8a"
+}

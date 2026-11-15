@@ -231,6 +231,10 @@ def collect_notices(module_roots, destination):
                 _regular_file(root, relative+'/'+path.relative_to(package).as_posix())
                 _write(destination, notice_relative, path.read_bytes())
                 copied.append(notice_relative)
+            # Keep the original author/repository/license declaration, including
+            # older packages whose permission statement lives only in metadata.
+            metadata_relative = section+'/'+relative+'/package.json'
+            _write(destination, metadata_relative, metadata_path.read_bytes())
             records.append({'scope':section, 'path':relative, 'name':metadata.get('name', relative),
                             'version':metadata.get('version', ''), 'license':metadata.get('license'),
                             'files':copied, 'readme_fallback':fallback})
@@ -401,6 +405,8 @@ def build_release(repo, output, version):
             'its original JavaScript source is included in backend/node_modules/web-push/. '
             'Vazirmatn fonts retain the SIL Open Font License 1.1 in '
             'frontend/public/fonts/OFL.txt and THIRD_PARTY_LICENSES/fonts/Vazirmatn/OFL.txt.\n\n'
+            'Supplemental upstream license texts and preserved permission evidence for '
+            'older packages with incomplete npm notices are retained in docs/licenses/.\n\n'
             'The dependency inventory is generated from the exact backend runtime installation '
             'and frontend build installation used for this artifact.\n').encode())
         _write(stage, 'SOURCE_TREE', (source_tree+'\n').encode())

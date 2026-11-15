@@ -176,6 +176,7 @@ class ReleaseTests(unittest.TestCase):
         builder.collect_notices({'backend':modules}, self.stage/'THIRD_PARTY_LICENSES')
         self.assertEqual((self.stage/'THIRD_PARTY_LICENSES/backend/pkg/LICENSE').read_text(), 'Full license text\nCopyright fixture author\n')
         self.assertTrue((self.stage/'THIRD_PARTY_LICENSES/backend/old/README.md').is_file())
+        self.assertEqual(json.loads((self.stage/'THIRD_PARTY_LICENSES/backend/old/package.json').read_text())['name'], 'old')
         index = json.loads((self.stage/'THIRD_PARTY_LICENSES/index.json').read_text())
         self.assertEqual(len(index['packages']), 2)
 
