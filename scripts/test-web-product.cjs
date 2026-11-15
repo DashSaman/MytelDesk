@@ -9,6 +9,7 @@ function persist(){fs.writeFileSync(path.join(out,'results.json'),JSON.stringify
 const json=(route,data,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(data)});
 let app;
 async function check(name,run,options={}){
+ if(process.env.MT_PRODUCT_CASE&&!name.includes(process.env.MT_PRODUCT_CASE))return;
  const session=await app.session(options);
  try{await run(session);assert.deepEqual(session.errors,[]);result.cases.push({name,pass:true});console.log('PASS '+name);}
  catch(e){result.cases.push({name,pass:false,error:e.message});console.log('FAIL '+name+': '+e.message);}
@@ -102,6 +103,23 @@ async function check(name,run,options={}){
   await s.goto('settings?tab=recording');assert.equal(await s.page.locator('[data-vad-state=unavailable]').count(),1);
   assert.equal(await s.page.locator('[data-vad-state=unavailable]').getByRole('button',{name:'تلاش مجدد',exact:true}).count(),1);
  },{override:async(route,url)=>{if(url.pathname==='/MytellDesk/api/vad/status'){await json(route,{available:false,engine:null,error_code:'vad.unavailable'});return true;}}});
+ for(const noun of['users','groups']){
+  let writes=0;
+  await check(noun+' saving is visible and repeated submit makes one request',async s=>{
+   await s.goto(noun);await s.page.locator('main .panel-header-actions .btn-primary').click();
+   if(noun==='users'){
+    await s.page.locator('#up-user-username').fill('fixture-new');await s.page.locator('#up-user-password').fill('FixtureOnlyPass42');
+   }else await s.page.locator('#gp-group-name').fill('Fixture group');
+   await s.page.locator('.ui-modal-footer button[type=submit]').dblclick({delay:30});
+   assert.equal(writes,1,'A double click must submit exactly once');
+   assert.equal(await s.page.locator('.ui-modal-footer button[type=submit]').getAttribute('aria-busy'),'true');
+   assert.equal(writes,1);await s.page.waitForTimeout(650);assert.equal(writes,1);
+  },{override:async(route,url,request)=>{
+   if(url.pathname==='/MytellDesk/api/settings/'+noun&&request.method()==='POST'){
+    writes++;await new Promise(r=>setTimeout(r,500));await json(route,{id:3,success:true});return true;
+   }
+  }});
+ }
  console.log(JSON.stringify({passed:result.cases.filter(x=>x.pass).length,total:result.cases.length,out}));
  process.exitCode=result.cases.some(x=>!x.pass)?1:0;
 })().catch(e=>{result.setupError=e.stack;persist();console.error(e);process.exitCode=2;}).finally(async()=>{persist();await app?.close();});

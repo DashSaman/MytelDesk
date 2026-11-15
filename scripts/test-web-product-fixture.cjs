@@ -46,6 +46,7 @@ function payload(url,mode='data'){
  '/api/pause-reasons':{reasons:[]},'/api/agents/wrapup-config':{max_secs:120,min_secs:0,max_secs_limit:1800},'/api/agents/shift-reset':{time:'04:00'},
  '/api/qos/status':{enabled:true},'/api/sip-tls/status':{enabled:true,domain:'pbx.example.test',udp_tcp_public:false},
  '/api/recording/status':{enabled:true,format:'wav'},'/api/recording/policy':policy,
+ '/api/vad/status':{available:true,engine:'silero',error_code:null},
  '/api/recording/retention':{local_days:30,local_max_bytes:null,vad_delete_legs:true,root_dir:'/var/spool/asterisk/monitor'},
  '/api/recording/storage-stats':{total_recordings:128,local:{used_bytes:1024**3,max_bytes:null,disk_free_bytes:20*1024**3,disk_total_bytes:50*1024**3,retention_days:30}},
  '/api/crm/config':{enabled:false,sync_enabled:false,lookup_enabled:false,url:'',method:'POST',headers:{},body_fields:[],field_map:{},field_catalog:[],status_map:{}},
