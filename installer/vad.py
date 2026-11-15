@@ -196,7 +196,11 @@ def ensure_vad(bundle, runtime_root, run, fetch_verified, service_user='asterisk
     for item in spec['packages']:
         target = wheels / item['filename']
         if target.is_symlink(): raise ValueError('VAD wheel symlink refused')
+        if target.exists() and not target.is_file():
+            raise ValueError('VAD wheel target is not a regular file')
         if not target.is_file() or _digest(target) != item['sha256']:
+            if target.is_file():
+                target.unlink()  # only a corrupt wheel inside this owned generation
             fetch_verified(item['url'], target, item['sha256'])
         _verify_file(target, item['sha256'], 'downloaded wheel')
         if target.stat().st_size != item['bytes']:
