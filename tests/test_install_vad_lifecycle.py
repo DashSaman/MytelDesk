@@ -1,5 +1,6 @@
 """Real installer orchestration against an isolated filesystem and fake commands."""
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -11,6 +12,7 @@ from unittest import mock
 
 spec=importlib.util.spec_from_file_location('install_vad_lifecycle',Path(__file__).resolve().parents[1]/'installer/install.py')
 mod=importlib.util.module_from_spec(spec);spec.loader.exec_module(mod)
+REAL_WAIT_HEALTH = mod.wait_health
 
 
 class VadInstallLifecycle(unittest.TestCase):
@@ -70,6 +72,51 @@ class VadInstallLifecycle(unittest.TestCase):
         values=mod.read_key_values(self.env)
         for key,value in self.vad.items():self.assertEqual(values[key],value)
         self.assertNotIn('RECORDING_ENABLED',values)
+
+    def install_with_real_health(self, ready_after):
+        clock = [0]
+        self.activation_values = None
+        def response(*_args, **_kwargs):
+            if self.activation_values is None:
+                self.activation_values = mod.read_key_values(self.env)
+            if ready_after is None or clock[0] < ready_after:
+                raise OSError('synthetic cold storage startup')
+            return io.BytesIO(b'{"status":"ok","ami_connected":true}')
+        mod.wait_health.side_effect = REAL_WAIT_HEALTH
+        with mock.patch.object(mod.time, 'time', side_effect=lambda: clock[0]), \
+             mock.patch.object(mod.time, 'sleep', side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)), \
+             mock.patch.object(mod, 'urlopen', side_effect=response), mock.patch('sys.stdout', io.StringIO()) as output:
+            try:
+                mod.install(self.bundle, 'https://pbx.example')
+            finally:
+                self.elapsed = clock[0]
+                self.readiness_output = output.getvalue()
+
+    def test_cold_activation_can_finish_after_the_old_300_second_deadline(self):
+        self.install_with_real_health(360)
+        self.assertEqual(self.elapsed, 360)
+        self.assertEqual(json.loads(self.state_file.read_text())['status'], 'ready')
+        mod.wait_health.assert_called_once_with(timeout=900)
+        self.assertIn('elapsed (limit 900s)', self.readiness_output)
+
+    def test_early_ready_activation_does_not_wait_for_the_new_budget(self):
+        self.install_with_real_health(0)
+        self.assertEqual(self.elapsed, 0)
+        self.assertEqual(json.loads(self.state_file.read_text())['status'], 'ready')
+        mod.wait_health.assert_called_once_with(timeout=900)
+        self.assertNotIn('Waiting for backend', self.readiness_output)
+
+    def test_failed_cold_activation_is_bounded_and_preserves_prepared_secrets(self):
+        with self.assertRaisesRegex(RuntimeError, 'Backend/AMI did not become ready'):
+            self.install_with_real_health(None)
+        self.assertEqual(self.elapsed, 900)
+        self.assertEqual(json.loads(self.state_file.read_text())['status'], 'prepared')
+        after = mod.read_key_values(self.env)
+        for key in ('DB_PASSWORD', 'JWT_SECRET', 'AMI_SECRET', 'OPDESK_BRIDGE_PW'):
+            self.assertEqual(after[key], self.activation_values[key])
+        self.assertFalse(self.unit.exists()); self.assertFalse(self.proxy.exists()); self.assertFalse(self.ami.exists())
+        self.assertIn(['systemctl', 'stop', 'myteldesk'], self.calls)
+        self.assertNotIn('Installation verified:', self.readiness_output)
 
     def test_fresh_download_failure_can_be_retried_without_manual_directory_deletion(self):
         self.provision.side_effect=[RuntimeError('temporary download failure'),self.vad]
