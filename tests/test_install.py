@@ -14,6 +14,28 @@ mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 
 class InstallTests(unittest.TestCase):
+    def test_private_node_extraction_ignores_archive_owner_and_umask(self):
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d)/'owned'; root.mkdir(mode=0o755)
+            bundle=Path(d)/'bundle'; (bundle/'installer').mkdir(parents=True)
+            (bundle/'installer/runtime.json').write_text(json.dumps({'version':'v24.22.3','sha256':'a'*64}))
+            def fake_run(argv, **_kwargs):
+                if argv[0]=='tar':
+                    self.assertIn('--no-same-owner',argv)
+                    self.assertIn('--no-same-permissions',argv)
+                    unpack=Path(argv[argv.index('-C')+1])/'node-v24.22.3-linux-x64'
+                    (unpack/'bin').mkdir(parents=True,mode=0o700)
+                    (unpack/'bin/node').write_bytes(b'fixture-node')
+                    (unpack/'bin/node').chmod(0o700)
+                return SimpleNamespace(stdout='v24.22.3\n',returncode=0)
+            with mock.patch.object(mod,'ROOT',root), mock.patch.object(mod,'fetch_verified'), mock.patch.object(mod,'run',side_effect=fake_run), mock.patch.object(mod.os,'chown',create=True):
+                node=mod.ensure_runtime(bundle)
+                self.assertTrue(node.is_file())
+                if mod.os.name=='posix':
+                    self.assertEqual(node.stat().st_mode&0o777,0o755)
+                    self.assertEqual(node.parent.stat().st_mode&0o777,0o755)
+
     def test_actual_schema_comments_are_not_expected_tables(self):
         release=Path(__file__).resolve().parents[1]
         text=(release/'backend/schema.sql').read_text()
