@@ -34,6 +34,7 @@ import { CrmController } from './api/routes/crm.controller';
 import { CallHistoryController } from './api/routes/call-history.controller';
 import { SettingsController } from './api/routes/settings.controller';
 import { AnalyticsController } from './api/routes/analytics.controller';
+import { VadController } from './api/routes/vad.controller';
 import { shutdown, startup } from './core/lifespan';
 
 @Injectable()
@@ -65,6 +66,7 @@ export const CONTROLLERS = [
   LiveController,
   PbxController,
   RecordingController,
+  VadController,
   CrmController,
   CallHistoryController,
   SettingsController, // after Softphone/Users/Groups/Agents/Live/Pbx: its /api/settings/:key would shadow /api/settings/users|agents|groups|queues
