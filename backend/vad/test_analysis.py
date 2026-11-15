@@ -42,17 +42,19 @@ class AnalysisTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             model = Path(directory) / 'model.onnx'; model.write_bytes(b'tampered model')
             with mock.patch.dict(os.environ, {'VAD_MODEL_PATH': str(model), 'VAD_MODEL_SHA256': hashlib.sha256(b'expected').hexdigest()}), \
-                    mock.patch.object(analysis, 'SILERO_MODEL_CACHE', model, create=True):
-                with self.assertRaises(RuntimeError): analysis._ensure_silero_model()
+                    mock.patch.object(analysis, '_runtime_spec', return_value={'model': {'sha256': hashlib.sha256(b'expected').hexdigest()}}):
+                with self.assertRaises(analysis.VadRuntimeError) as failure: analysis._ensure_silero_model()
+                self.assertEqual(failure.exception.code, 'model_hash_mismatch')
 
     def test_missing_model_never_triggers_a_first_call_download(self):
         with tempfile.TemporaryDirectory() as directory:
             model = Path(directory) / 'model.onnx'
             def fake_download(_url, destination): Path(destination).write_bytes(b'unverified download')
             with mock.patch.dict(os.environ, {'VAD_MODEL_PATH': str(model), 'VAD_MODEL_SHA256': 'a' * 64}), \
-                    mock.patch.object(analysis, 'SILERO_MODEL_CACHE', model, create=True), \
+                    mock.patch.object(analysis, '_runtime_spec', return_value={'model': {'sha256': 'a' * 64}}), \
                     mock.patch('urllib.request.urlretrieve', side_effect=fake_download) as download:
-                with self.assertRaises(RuntimeError): analysis._ensure_silero_model()
+                with self.assertRaises(analysis.VadRuntimeError) as failure: analysis._ensure_silero_model()
+                self.assertEqual(failure.exception.code, 'model_missing')
                 download.assert_not_called()
 
     def test_session_uses_only_one_cpu_thread_for_each_execution_pool(self):
@@ -67,6 +69,37 @@ class AnalysisTests(unittest.TestCase):
         self.assertIn('sess_options', options)
         self.assertEqual(options['sess_options'].intra_op_num_threads, 1)
         self.assertEqual(options['sess_options'].inter_op_num_threads, 1)
+
+    def test_bundled_model_is_verified_offline_and_override_requires_both_exact_pins(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            model = analysis._ensure_silero_model()
+            self.assertEqual(hashlib.sha256(model.read_bytes()).hexdigest(), analysis._runtime_spec()['model']['sha256'])
+        for environment in ({'VAD_MODEL_PATH': 'relative.onnx', 'VAD_MODEL_SHA256': 'a' * 64},
+                            {'VAD_MODEL_PATH': str(model)}, {'VAD_MODEL_SHA256': 'a' * 64}):
+            with self.subTest(environment=environment), mock.patch.dict(os.environ, environment, clear=True):
+                with self.assertRaises(analysis.VadRuntimeError) as failure: analysis._ensure_silero_model()
+                self.assertEqual(failure.exception.code, 'invalid_configuration')
+
+    def test_invalid_runtime_metadata_never_falls_back_to_unpinned_model(self):
+        for payload in (b'not-json', b'[]', b'{}', b' ' * (128 * 1024 + 1)):
+            with self.subTest(size=len(payload)), mock.patch.object(Path, 'read_bytes', return_value=payload):
+                with self.assertRaises(analysis.VadRuntimeError) as failure: analysis._runtime_spec()
+                self.assertEqual(failure.exception.code, 'invalid_configuration')
+
+    def test_model_integrity_failure_never_silently_reports_webrtc_success(self):
+        with mock.patch.object(analysis, 'vad_with_silero', side_effect=analysis.VadRuntimeError('model_hash_mismatch')), \
+                mock.patch.object(analysis, 'vad_with_webrtc', return_value=[]) as fallback:
+            with self.assertRaises(analysis.VadRuntimeError): analysis._vad_one('unused.wav')
+        fallback.assert_not_called()
+
+    def test_hysteresis_and_final_padded_frame_preserve_sample_timestamps(self):
+        probabilities = iter((0.9, 0.2, 0.05, 0.9, 0.9))
+        def infer(_names, values):
+            self.assertEqual(values['input'].shape, (1, 576))
+            return np.array([[next(probabilities)]], dtype=np.float32), values['state']
+        with mock.patch.object(analysis, '_silero_session', return_value=SimpleNamespace(run=infer)):
+            segments = analysis.silero_segments(np.zeros(4 * 512 + 111, dtype=np.float32), 16000)
+        self.assertEqual(segments, [(0.0, 0.064), (0.096, 0.135)])
 
 
 class DoctorTests(unittest.TestCase):
@@ -152,6 +185,16 @@ class DoctorTests(unittest.TestCase):
         code, result = self.invoke()
         self.assertNotEqual(code, 0)
         self.assertEqual(result['error_code'], 'inference_failed')
+
+    def test_doctor_reports_missing_numpy_and_preserves_only_safe_model_codes(self):
+        with mock.patch.object(analysis, 'np', None):
+            code, result = self.invoke()
+        self.assertNotEqual(code, 0)
+        self.assertEqual(result['error_code'], 'dependency_unavailable')
+        with mock.patch.object(analysis, '_ensure_silero_model', side_effect=analysis.VadRuntimeError('model_hash_mismatch')):
+            code, result = self.invoke()
+        self.assertNotEqual(code, 0)
+        self.assertEqual(result['error_code'], 'model_hash_mismatch')
 
 
 if __name__ == '__main__':
