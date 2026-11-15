@@ -56,7 +56,7 @@ describe('schema.sql', () => {
   it('defines every OpDesk table, call_vad and audit_log included, and nothing else', () => {
     expect(new Set(tables)).toEqual(
       new Set([
-        'OpDesk_settings', 'users', 'user_monitor_modes', 'agents', 'queues', 'groups', 'user_groups', 'group_agents',
+        'OpDesk_settings', 'users', 'user_identities', 'user_monitor_modes', 'agents', 'queues', 'groups', 'user_groups', 'group_agents',
         'group_queues', 'call_notifications', 'call_vad', 'call_supervision', 'device_tokens', 'sip_push_bindings',
         'pause_reasons', 'agent_activity', 'analytics_sla_settings', 'analytics_fcr_settings', 'analytics_hourly',
         'analytics_daily', 'analytics_agent_daily', 'api_keys', 'webhook_deliveries', 'contacts', 'audit_log',
@@ -321,6 +321,25 @@ describe('migrate', () => {
     expect(sqls().filter((s) => /^UPDATE users/.test(s))).toEqual([]);
   });
 
+  it('does not expose the bootstrap hash if the database driver includes it in an error', async () => {
+    const executeNormally = ex.getMockImplementation()!;
+    ex.mockImplementation(async (sql: string, params: unknown[]) => {
+      if (/^INSERT IGNORE INTO users/.test(sql)) throw new Error('fixture SQL error: ' + bootstrapHash);
+      return executeNormally(sql, params);
+    });
+    const output: string[] = [];
+    const stderr = jest.spyOn(process.stderr, 'write').mockImplementation((chunk) => { output.push(String(chunk)); return true; });
+    setLogLevel('ERROR');
+    try {
+      await mig.migrate();
+      expect(output.join('')).toContain('bootstrap INSERT failed');
+      expect(output.join('')).not.toContain(bootstrapHash);
+    } finally {
+      stderr.mockRestore();
+      setLogLevel('CRITICAL');
+    }
+  });
+
   it('retains the bootstrap file when a concurrent INSERT was ignored', async () => {
     const executeNormally = ex.getMockImplementation()!;
     ex.mockImplementation(async (sql: string, params: unknown[]) => {
@@ -339,6 +358,21 @@ describe('migrate', () => {
     await mig.migrate();
     expect(sqls().filter((s) => /(?:INTO|UPDATE) users/.test(s))).toEqual([]);
     expect(fs.existsSync(bootstrapFile)).toBe(true);
+  });
+
+  it('keeps the successfully created account when deleting the bootstrap file fails', async () => {
+    const nativeFs = jest.requireActual<typeof fs>('node:fs');
+    const unlink = jest.spyOn(nativeFs, 'unlinkSync').mockImplementation(() => { throw new Error('fixture unlink denied'); });
+    try {
+      await mig.migrate();
+      expect(counts.users).toBe(1);
+      expect(fs.existsSync(bootstrapFile)).toBe(true);
+      executed = [];
+      await mig.migrate();
+      expect(sqls().filter((s) => /(?:INTO|UPDATE) users/.test(s))).toEqual([]);
+    } finally {
+      unlink.mockRestore();
+    }
   });
 
   it.each(['/MytellDesk/', '/MytellDesk'])('seeds the standalone SIP websocket path for base %s', async (base) => {

@@ -10,8 +10,8 @@
  *   2. every CREATE TABLE IF NOT EXISTS of schema.sql, in file order (FK order);
  *   3. column changes, each guarded by information_schema (no ADD COLUMN IF NOT
  *      EXISTS on MariaDB 5.5), e.g. the device_tokens.platform 'web' widening;
- *   4. seeds: the admin account (only into an empty users table), the admin password
- *      override (.admin_init_hash / OPDESK_ADMIN_PASSWORD, as Python applied it), the
+ *   4. seeds: the admin account (only into an empty users table, using an installer's
+ *      one-shot bootstrap hash; existing accounts are never reset), the
  *      default Not-Ready codes (only into an empty catalog), the __WRAPUP system code,
  *      fixed defaults, and server.py's 22 default settings plus its two rewrites.
  *
@@ -24,25 +24,17 @@ import * as dgram from 'node:dgram';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import * as bcrypt from 'bcryptjs';
 import * as mysql from 'mysql2/promise';
 import { BACKEND_DIR, env, envFlag } from '../core/config';
 import { getLogger } from '../core/logger';
 import { appDbName, dbErrno, execute, query, queryOne } from './pool';
 import { getSetting, setSetting } from './manager/platform';
 import { DEFAULT_PAUSE_REASONS, SYSTEM_PAUSE_REASONS } from './manager/ops';
-import { BCRYPT_ROUNDS } from './manager/users';
 
 const log = getLogger('db.migrate');
 
 /** backend/schema.sql: the single source of the table definitions. */
 export const SCHEMA_FILE = path.join(BACKEND_DIR, 'schema.sql');
-
-/** Written by install.sh: a bcrypt hash for the admin account, read once and deleted. */
-export const ADMIN_INIT_HASH_FILE = path.join(BACKEND_DIR, '.admin_init_hash');
-
-/** bcrypt of the default admin password shipped in OpDesk's original schema.sql. */
-export const DEFAULT_ADMIN_PASSWORD_HASH = '$2b$12$BGZ/sGBqq7XxiC5MxVOlE.lsyU4Pkg1nVhs0VjEgzekDMUBiYx4PS';
 
 // ---------------------------------------------------------------------------
 // schema.sql parsing
@@ -349,41 +341,50 @@ export async function applyColumnGuards(guards: ColumnGuard[] = COLUMN_GUARDS): 
 // ---------------------------------------------------------------------------
 
 /**
- * The admin password override, as Python's _resolve_admin_password_hash:
- *   1. backend/.admin_init_hash (install.sh writes a bcrypt hash there): read, then deleted;
- *   2. OPDESK_ADMIN_PASSWORD (plain text, hashed here): applied on every start while set.
- * null when neither is configured.
+ * The installer places a one-shot bcrypt hash in its writable data directory.
+ * Reading it does not consume it: a failed INSERT must be recoverable on restart.
+ * Plaintext environment overrides and shared default passwords are never used.
  */
-export async function resolveAdminPasswordHash(): Promise<string | null> {
-  try {
-    if (fs.existsSync(ADMIN_INIT_HASH_FILE)) {
-      const hash = fs.readFileSync(ADMIN_INIT_HASH_FILE, 'utf8').trim();
-      if (hash) {
-        fs.rmSync(ADMIN_INIT_HASH_FILE, { force: true });
-        return hash;
-      }
-    }
-  } catch (e) {
-    log.warning('⚠️  Could not read %s: %s', ADMIN_INIT_HASH_FILE, e);
+function readAdminBootstrap(): { filename: string; hash: string } | null {
+  const filename = env('OPDESK_ADMIN_INIT_HASH_FILE', '').trim();
+  if (!filename) {
+    log.warning('Administrator bootstrap is not configured; no default account was created');
+    return null;
   }
-  const plain = env('OPDESK_ADMIN_PASSWORD', '');
-  if (plain) return bcrypt.hash(plain, BCRYPT_ROUNDS);
+  try {
+    const hash = fs.readFileSync(filename, 'utf8').trim();
+    if (/^\$2[aby]\$(?:0[4-9]|[12]\d|3[01])\$[./A-Za-z0-9]{53}$/.test(hash)) {
+      return { filename, hash };
+    }
+    log.warning('Administrator bootstrap hash is invalid; the file was retained');
+  } catch {
+    log.warning('Administrator bootstrap file could not be read; no account was created');
+  }
   return null;
 }
 
-/** The admin account: created only when there are no users at all; the override always applies. */
+/** Seed an empty users table only. Never read or apply bootstrap credentials on upgrade. */
 async function seedAdmin(): Promise<void> {
-  const override = await resolveAdminPasswordHash();
   const row = await queryOne('SELECT COUNT(*) AS n FROM users');
-  if (row && Number(row.n) === 0) {
-    await execute("INSERT IGNORE INTO users (username, password_hash, name, role) VALUES ('admin', ?, 'Admin', 'admin')", [
-      override ?? DEFAULT_ADMIN_PASSWORD_HASH,
-    ]);
-    log.info('✅ Created the admin account');
+  if (!row || Number(row.n) !== 0) return;
+  const bootstrap = readAdminBootstrap();
+  if (!bootstrap) return;
+  try {
+    const result = await execute("INSERT IGNORE INTO users (username, password_hash, name, role) VALUES ('admin', ?, 'Admin', 'admin')", [bootstrap.hash]);
+    if (result.affectedRows !== 1) {
+      log.warning('Administrator bootstrap INSERT made no change; the hash file was retained');
+      return;
+    }
+  } catch {
+    // A driver error can include the parameterized credential in its SQL detail.
+    log.error('Administrator bootstrap INSERT failed; the hash file was retained');
+    return;
   }
-  if (override) {
-    await execute("UPDATE users SET password_hash = ? WHERE username = 'admin'", [override]);
-    log.info('✅ Admin password applied');
+  log.info('✅ Created the initial admin account');
+  try {
+    fs.unlinkSync(bootstrap.filename);
+  } catch {
+    log.warning('Administrator was created but its bootstrap file could not be removed');
   }
 }
 
@@ -536,13 +537,16 @@ export function rewriteRetiredSyncFields(raw: string): string | null {
 async function seedDefaultSettings(): Promise<void> {
   const host = env('OPDESK_DOMAIN', '').trim() || (await detectLocalIp());
   const suffix = publicPortSuffix();
-  const webrtcDefault = `wss://${host}${suffix}/sip-ws`;
+  const configuredBase = env('OPDESK_BASE_PATH', '').trim().replace(/\/+$/, '');
+  const base = /^\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*$/.test(configuredBase) ? configuredBase : '';
+  const webrtcDefault = `wss://${host}${suffix}${base}/sip-ws`;
 
   // Before the Nginx port reached the backend, the default was seeded without a port,
   // which points at whatever owns 443 (e.g. FreePBX's Apache) when Nginx is elsewhere.
   if (suffix && (await getSetting('WEBRTC_PBX_SERVER')) === `wss://${host}/sip-ws`) {
-    await setSetting('WEBRTC_PBX_SERVER', webrtcDefault);
-    log.info('Migrated WEBRTC_PBX_SERVER to %s', webrtcDefault);
+    const withPort = `wss://${host}${suffix}/sip-ws`;
+    await setSetting('WEBRTC_PBX_SERVER', withPort);
+    log.info('Migrated WEBRTC_PBX_SERVER to %s', withPort);
   }
 
   for (const [key, value] of Object.entries(defaultSettings(webrtcDefault))) {
