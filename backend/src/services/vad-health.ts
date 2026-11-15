@@ -1,3 +1,7 @@
+import { execFile } from 'child_process';
+import { env } from '../core/config';
+import { VAD_SCRIPT, vadPython } from './vad-runner';
+
 export interface VadHealthStatus {
   available: boolean;
   engine: 'silero' | null;
@@ -47,7 +51,3 @@ export class VadHealthMonitor {
 }
 
 export const vadHealth = new VadHealthMonitor();
-import { execFile } from 'child_process';
-import { env } from '../core/config';
-import { VAD_SCRIPT, vadPython } from './vad-runner';
-
