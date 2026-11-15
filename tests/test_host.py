@@ -182,6 +182,21 @@ class SystemdTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             host.render_systemd(service_user="asterisk\nUser=root", **SYSTEMD_ARGS)
 
+    def test_terminal_newline_cannot_pass_end_anchor_validation(self):
+        for key, value in (("node_path", "/opt/myteldesk/node\n"), ("service_user", "asterisk\n")):
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                host.render_systemd(**dict(SYSTEMD_ARGS, **{key: value}))
+
+    def test_data_directory_cannot_disable_protection_for_system_roots(self):
+        for value in ("/etc", "/usr", "/var", "/var/lib", "/opt", "/run", "/home", "/root"):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                host.render_systemd(**dict(SYSTEMD_ARGS, data_dir=value))
+
+    def test_boolean_options_are_not_interpreted_by_string_truthiness(self):
+        for key in ("private_tmp", "protect_system"):
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                host.render_systemd(**dict(SYSTEMD_ARGS, **{key: "false"}))
+
 
 if __name__ == "__main__":
     unittest.main()
