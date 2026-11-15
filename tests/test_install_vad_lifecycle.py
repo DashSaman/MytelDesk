@@ -202,6 +202,8 @@ class VadInstallLifecycle(unittest.TestCase):
 
     def test_same_ready_proxy_failure_remains_immediate(self):
         self.existing(version='1.1.0', tree='a'*40)
+        with self.env.open('a') as stream:
+            stream.write(''.join(key + '=' + value + '\n' for key, value in self.vad.items()))
         mod.verify_proxy.side_effect = RuntimeError('bad existing proxy')
         with mock.patch.object(mod.time, 'sleep') as sleep:
             with self.assertRaisesRegex(RuntimeError, 'bad existing proxy'): mod.install(self.bundle, 'https://pbx.example')
