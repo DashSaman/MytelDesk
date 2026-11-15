@@ -28,6 +28,7 @@ from urllib.parse import urlsplit
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from host import detect_platform, read_key_values, render_apache, render_systemd, validate_public_url
+from vad import ensure_vad, doctor_vad
 
 ROOT = Path('/opt/myteldesk')
 CONFIG = Path('/etc/myteldesk')
@@ -338,7 +339,7 @@ def ensure_runtime(bundle):
 
 
 def progress(number, message):
-    print('[{}/8] {}'.format(number, message), flush=True)
+    print('[{}/9] {}'.format(number, message), flush=True)
 
 
 def ami_enabled(output):
@@ -461,11 +462,6 @@ def install(bundle, public_url=None):
         raise RuntimeError('Changing the public URL requires an explicit configuration migration; existing CORS/SIP settings were preserved')
     if state and state.get('status') not in ('prepared', 'ready'):
         raise RuntimeError('Installation state requires manual recovery; retained identities will not be reset')
-    if state and state.get('version') == manifest['version'] and state.get('tree') == manifest['source_tree'] and state.get('status') == 'ready':
-        wait_health(20); verify_app(password, Path(state['release']))
-        verify_proxy(public_url)
-        print('Already installed and healthy. URL: ' + public_url)
-        return
     progress(2, 'Installing checksum-pinned private Node runtime')
     node = ensure_runtime(bundle)
     release = ROOT / 'releases' / (manifest['version'] + '-' + manifest['source_tree'][:12])
@@ -479,7 +475,18 @@ def install(bundle, public_url=None):
             if item.is_file(): item.chmod(0o755 if item.stat().st_mode & 0o111 else 0o644)
             elif item.is_dir(): item.chmod(0o755)
         release.chmod(0o755)
-    progress(3, 'Preparing dedicated secrets and database grants')
+    progress(3, 'Provisioning and verifying automatic CPU voice analysis')
+    vad_environment = ensure_vad(release, ROOT / 'runtime/vad', run, fetch_verified, service_user='asterisk')
+    if set(vad_environment) != {'VAD_PYTHON', 'VAD_MODEL_PATH', 'VAD_MODEL_SHA256'}:
+        raise RuntimeError('VAD provisioner returned incomplete environment configuration')
+    if state and state.get('version') == manifest['version'] and state.get('tree') == manifest['source_tree'] and state.get('status') == 'ready':
+        existing_values = read_key_values(ENV)
+        if all(existing_values.get(key) == value for key, value in vad_environment.items()):
+            doctor_vad(release, existing_values, run, service_user='asterisk')
+            wait_health(20); verify_app(password, release); verify_proxy(public_url)
+            print('Already installed and healthy. URL: ' + public_url)
+            return
+    progress(4, 'Preparing dedicated secrets and database grants')
     admin_password = None
     if state:
         values = read_key_values(ENV)
@@ -495,6 +502,7 @@ def install(bundle, public_url=None):
                       OPDESK_ADMIN_INIT_HASH_FILE=str(DATA / 'bootstrap-admin.hash'),
                       SETTINGS_ENCRYPTION_KEY_FILE=str(DATA / 'secrets/settings.key'),
                       ASTERISK_RECORDING_ROOT_DIR='/var/spool/asterisk/monitor')
+        values.update(vad_environment)
         atomic(ENV, render_env(values), 0o640, 0, group.gr_gid)
         # EnvironmentFile is read by systemd, directory remains root-private.
         state = dict(owner='MytelDesk', schema=1, status='prepared', public_url=public_url, platform=platform)
@@ -516,7 +524,10 @@ def install(bundle, public_url=None):
     state.update(pending_journal=str(transaction.directory / 'journal.json'), pending_current=previous_current)
     save_state(state)
     try:
-        progress(4, 'Adding isolated loopback-only AMI account')
+        values.update(vad_environment)
+        if read_key_values(ENV) != values:
+            transaction.write(ENV, render_env(values), 0o640, 0, group.gr_gid)
+        progress(5, 'Adding isolated loopback-only AMI account')
         manager = Path('/etc/asterisk/manager.conf')
         main = manager.read_text()
         custom = Path('/etc/asterisk/manager_custom.conf')
@@ -533,7 +544,7 @@ def install(bundle, public_url=None):
         transaction.write(include_parent, include_config(parent_text, AMI.name), stat.S_IMODE(oldinfo.st_mode) if oldinfo else 0o644,
                           oldinfo.st_uid if oldinfo else account.pw_uid, oldinfo.st_gid if oldinfo else group.gr_gid)
         run(['asterisk', '-rx', 'manager reload'])
-        progress(5, 'Configuring unprivileged service and scoped Apache proxy')
+        progress(6, 'Configuring unprivileged service and scoped Apache proxy')
         # Keep system tools available without changing system-wide Node or shell profiles.
         unit = render_systemd(str(node), str(release), str(ENV))
         unit = unit.replace('Environment=NODE_ENV=production\n', 'Environment=NODE_ENV=production\nEnvironment=PATH=' + str(node.parent) + ':/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin\n')
@@ -545,11 +556,12 @@ def install(bundle, public_url=None):
         # SELinux state and firewall policy stay owned by the PBX administrator.
         # Default Issabel policy permits proxying; enforcing hosts must authorize it.
         run(['systemctl', 'daemon-reload'])
-        progress(6, 'Starting MytelDesk and checking database/AMI readiness')
+        progress(7, 'Starting MytelDesk and checking database/AMI readiness')
         run(['systemctl', 'enable', 'myteldesk'])
         run(['systemctl', 'restart', 'myteldesk'])
         wait_health(); verify_app(password, release)
-        progress(7, 'Activating Apache configuration')
+        doctor_vad(release, values, run, service_user='asterisk')
+        progress(8, 'Activating Apache configuration')
         run(['systemctl', 'reload', 'httpd'])
         verify_proxy(public_url)
         link = ROOT / '.current-next'
@@ -575,7 +587,7 @@ def install(bundle, public_url=None):
         if was_active: run(['systemctl', 'start', 'myteldesk'], check=False)
         else: run(['systemctl', 'disable', 'myteldesk'], check=False)
         raise
-    progress(8, 'Installation verified: backend, database tables and Asterisk AMI')
+    progress(9, 'Installation verified: backend, database, Asterisk AMI and CPU voice analysis')
     print('URL: ' + public_url)
     if admin_password:
         print('Administrator credentials: /etc/myteldesk/initial-admin.txt (root only). Read once and store securely.')
@@ -590,7 +602,8 @@ def doctor():
     verify_app(root_database_password(), Path(state['release']))
     run(['httpd', '-t'])
     verify_proxy(state['public_url'])
-    print('OK: service, local health, AMI connection, application schema and administrator. ' + state['public_url'])
+    doctor_vad(Path(state['release']), read_key_values(ENV), run, service_user='asterisk')
+    print('OK: service, local health, AMI, application schema, administrator and CPU voice analysis. ' + state['public_url'])
 
 
 def uninstall():
