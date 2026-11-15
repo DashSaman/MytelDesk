@@ -53,7 +53,7 @@ function req(over: Record<string, unknown> = {}, headers: Record<string, string>
   return { params: {}, query: {}, body: {}, principal: AGENT, header: (n: string) => lower[n.toLowerCase()], ...over } as never;
 }
 
-const ENV_KEYS = ['OPDESK_DOMAIN', 'NGINX_HTTPS_PORT', 'WEBRTC_PBX_SERVER'];
+const ENV_KEYS = ['OPDESK_DOMAIN', 'NGINX_HTTPS_PORT', 'WEBRTC_PBX_SERVER', 'OPDESK_BASE_PATH'];
 beforeEach(() => {
   jest.clearAllMocks();
   for (const k of Object.keys(settings)) delete settings[k];
@@ -66,6 +66,29 @@ beforeEach(() => {
 });
 
 describe('/api/webrtc/config', () => {
+  test('an empty server setting keeps the standalone SIP websocket prefix', async () => {
+    process.env.OPDESK_BASE_PATH = '/MytellDesk/';
+    expect((await ctl.webrtcConfig(req())).server).toBe('wss://10.0.0.5/MytellDesk/sip-ws');
+  });
+
+  test('a legacy direct-Asterisk URL falls back to the installed prefix', async () => {
+    process.env.OPDESK_BASE_PATH = '/MytellDesk/';
+    settings.WEBRTC_PBX_SERVER = 'wss://10.0.0.5:8089/ws';
+    expect((await ctl.webrtcConfig(req())).server).toBe('wss://10.0.0.5/MytellDesk/sip-ws');
+  });
+
+  test('a configured public domain port replaces the request port exactly once', async () => {
+    process.env.OPDESK_BASE_PATH = '/MytellDesk/';
+    process.env.OPDESK_DOMAIN = 'pbx.example.com:9443';
+    expect((await ctl.webrtcConfig(req({}, { host:'10.0.0.5:8443' }))).server).toBe('wss://pbx.example.com:9443/MytellDesk/sip-ws');
+  });
+
+  test('a stored custom websocket path is preserved with a standalone base', async () => {
+    process.env.OPDESK_BASE_PATH = '/MytellDesk/';
+    settings.WEBRTC_PBX_SERVER = 'wss://sip.example.com/custom';
+    expect((await ctl.webrtcConfig(req())).server).toBe('wss://sip.example.com/custom');
+  });
+
   test('host from the request, plus the Nginx port when the Host header has none', async () => {
     process.env.NGINX_HTTPS_PORT = '8443';
     mocked(dbm.getUserWebrtcCredentials).mockResolvedValue({ extension: '100' });
