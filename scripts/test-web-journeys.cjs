@@ -15,6 +15,17 @@ async function check(name,body,options={}){
  finally{await s.close();persist();}
 }
 (async()=>{app=await start();
+ await check('recording retention save keeps its confirmation after refreshing settings',async s=>{
+  await s.goto('settings?tab=recording');await s.page.locator('#tab-local').click();await s.page.locator('#rec-days').fill('45');
+  await s.page.locator('.ui-card-footer .btn-primary').click();await s.page.waitForTimeout(500);
+  assert.ok((await s.page.locator('main [role=status]').allTextContents()).some(text=>text.includes('Retention settings saved')));
+  assert.equal(s.requests.filter(r=>r.path==='/MytellDesk/api/recording/retention'&&r.method==='POST').length,1);
+ });
+ await check('partial team load keeps known users visible and disables unsafe editing',async s=>{
+  await s.goto('users');assert.ok((await s.page.locator('main').innerText()).includes('demo-admin'));
+  assert.equal(await s.page.locator('main .panel-header-actions .btn-primary').isDisabled(),true);
+  assert.ok(await s.page.getByRole('button',{name:'Retry',exact:true}).count());
+ },{override:async(route,url)=>{if(url.pathname==='/MytellDesk/api/settings/agents'){await json(route,{message:'Fixture unavailable'},500);return true;}}});
  await check('main navigation opens every available section',async s=>{
   await s.goto('dashboard');const items=await s.page.locator('.sidebar-item').allTextContents();
   for(const text of items){await s.page.locator('.sidebar-item').filter({hasText:text.trim()}).first().click();await s.page.waitForTimeout(150);assert.ok((await s.page.locator('main').innerText()).trim().length>0);}

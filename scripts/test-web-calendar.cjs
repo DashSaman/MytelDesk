@@ -48,10 +48,10 @@ async function openRange(s){await s.goto('call-log');await s.page.locator('.ui-r
   assert.ok(await range.locator('[role=alert]').count());
  });
  await browserCase('Persian calendar has a Saturday-first grid and keyboard selection keeps the range dialog open',async s=>{
-  const range=await openRange(s);await range.locator('input').first().fill('۱۴۰۵/۰۸/۲۴');await range.locator('.ui-date-calendar-toggle').first().click();
+  const range=await openRange(s);await range.locator('input').first().fill('۱۴۰۵/۰۸/۲۲');await range.locator('.ui-date-calendar-toggle').first().click();
   const cal=range.locator('.ui-date-calendar');assert.equal(await cal.locator('th').first().innerText(),'ش');
   const selected=cal.locator('[aria-pressed=true]');await selected.focus();await s.page.keyboard.press('ArrowLeft');await s.page.keyboard.press('Enter');
-  assert.equal(await range.locator('input').first().inputValue(),'۱۴۰۵/۰۸/۲۵');assert.equal(await s.page.locator('.ui-popover').count(),1);
+  assert.equal(await range.locator('input').first().inputValue(),'۱۴۰۵/۰۸/۲۳');assert.equal(await s.page.locator('.ui-popover').count(),1);
   assert.equal(await range.locator('.ui-date-calendar-toggle').first().evaluate(e=>e===document.activeElement),true);
  });
  await browserCase('calendar Escape closes the inner calendar and preserves its range picker',async s=>{
@@ -63,13 +63,20 @@ async function openRange(s){await s.goto('call-log');await s.page.locator('.ui-r
   await range.locator('input').first().fill('2025-03-20');await s.page.waitForTimeout(450);
   assert.ok(s.requests.some(r=>new URLSearchParams(r.search).get('date_from')==='2025-03-20'));
  },{lang:'en'});
- await browserCase('API key expiry accepts Persian dates and invalid draft blocks its save action',async s=>{
-  await s.goto('settings?tab=api-keys');await s.page.locator('main .btn-primary').first().click();
+ let savedExpiry=null;
+ await browserCase('API key expiry validates Persian drafts and posts the exact ISO civil date',async s=>{
+  await s.goto('settings?tab=api-keys');await s.page.locator('main .ui-card-actions button').last().click();
   const input=s.page.locator('#ak-expires');assert.equal(await input.getAttribute('type'),'text');await input.fill('۱۴۰۰/۱۲/۳۰');await input.blur();
   assert.equal(await s.page.locator('.ui-modal-footer .btn-primary').isDisabled(),true);
+  assert.equal(savedExpiry,null);
   await input.fill('۱۴۰۵/۰۹/۰۱');await input.blur();assert.equal(await input.getAttribute('aria-invalid'),'false');
   assert.equal(await s.page.locator('.ui-modal-footer .btn-primary').isDisabled(),false);
- });
+  await s.page.locator('#ak-name').fill('Fixture calendar key');await s.page.locator('.apikey-scope-grid input[type=checkbox]').first().check();
+  await s.page.locator('.ui-modal-footer .btn-primary').click();await s.page.waitForTimeout(350);assert.equal(savedExpiry,'2026-11-22');
+ },{override:async(route,url,request)=>{
+  if(url.pathname==='/MytellDesk/api/api-keys/permissions'){await route.fulfill({contentType:'application/json',body:JSON.stringify({permissions:['calls:read']})});return true;}
+  if(url.pathname==='/MytellDesk/api/api-keys'&&request.method()==='POST'){savedExpiry=JSON.parse(request.postData()).expires_at;await route.fulfill({contentType:'application/json',body:JSON.stringify({id:99,name:'Fixture calendar key',key:'fixture-not-a-real-key',scopes:['calls:read']})});return true;}
+ }});
  for(const theme of['light','dark'])await browserCase('Persian mobile '+theme+' date picker stays inside the viewport',async s=>{
   const range=await openRange(s);await range.locator('.ui-date-calendar-toggle').first().click();
   assert.equal(await s.page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
