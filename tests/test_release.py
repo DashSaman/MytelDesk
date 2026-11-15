@@ -7,6 +7,7 @@ from pathlib import Path
 import tarfile
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 REPO = Path(__file__).resolve().parents[1]
@@ -177,6 +178,42 @@ class ReleaseTests(unittest.TestCase):
         self.assertTrue((self.stage/'THIRD_PARTY_LICENSES/backend/old/README.md').is_file())
         index = json.loads((self.stage/'THIRD_PARTY_LICENSES/index.json').read_text())
         self.assertEqual(len(index['packages']), 2)
+
+    def test_content_boundary_rejects_tokens_and_real_pem_body(self):
+        builder = load_builder()
+        # Deliberately fabricated strings, split so this source is not a credential.
+        for content in (('github_'+'pat_'+'x'*60).encode(),
+                        ('-----BEGIN '+'PRIVATE KEY-----\n'+'A'*64+'\n').encode()):
+            with self.subTest(content_length=len(content)), self.assertRaises(ValueError):
+                builder._write(self.stage, 'README.md', content)
+        builder._write(self.stage, 'README.md', b"Validation checks 'BEGIN PRIVATE KEY'; no key is present.\n")
+
+    def test_clean_build_snapshot_has_only_git_source_and_development_dependencies(self):
+        builder = load_builder()
+        files = ['backend/src/main.ts', 'frontend/src/App.tsx', 'frontend/public/fonts/OFL.txt']
+        for name in files: write(self.source/name, 'tracked')
+        write(self.source/'frontend/.env', 'VITE_PRIVATE=hostsecret')
+        write(self.source/'backend/src/ignored-local.ts', 'ignored host code')
+        write(self.source/'frontend/dist/stale.js', 'stale')
+        write(self.source/'cert/server.pem', 'host key')
+        for section in ('backend', 'frontend'):
+            write(self.source/section/'node_modules/compiler/index.js', 'installed compiler')
+        builder.prepare_build_tree(self.source, self.stage, files, {name:b'git blob source' for name in files})
+        for name in files:
+            self.assertEqual((self.stage/name).read_bytes(), b'git blob source')
+        for name in ('frontend/.env', 'backend/src/ignored-local.ts', 'frontend/dist/stale.js', 'cert/server.pem'):
+            self.assertFalse((self.stage/name).exists(), name)
+        self.assertTrue((self.stage/'frontend/node_modules/compiler/index.js').is_file())
+
+    def test_build_environment_cannot_inject_host_vite_values_or_node_preloads(self):
+        builder = load_builder()
+        with patch.dict(os.environ, {'VITE_HOST_SECRET':'private', 'NODE_OPTIONS':'--require local.js',
+                                     'NODE_PATH':'/host/modules'}), patch.object(builder.subprocess, 'run') as run:
+            builder._run(['npm', 'run', 'build'], self.source)
+        environment = run.call_args.kwargs['env']
+        for name in ('VITE_HOST_SECRET', 'NODE_OPTIONS', 'NODE_PATH'):
+            self.assertNotIn(name, environment)
+        self.assertEqual(environment['NODE_ENV'], 'production')
 
 
 if __name__ == '__main__':
