@@ -63,7 +63,7 @@ Asterisk 16 از **۹ اکتبر ۲۰۲۳** و Asterisk 18 از **۲۰ اکتب�
 
 | فرمان با root | نتیجه |
 |---|---|
-| `myteldesk doctor` | بررسی سرویس، سلامت محلی backend، اتصال AMI، جداول برنامه، مدیر فعال و صحت تنظیم Apache |
+| `myteldesk doctor` | بررسی سرویس، سلامت backend، اتصال AMI، جداول برنامه، مدیر فعال، مسیر HTTPS و اجرای واقعی مدل VAD |
 | `myteldesk rollback` | بازگشت کد و پیکربندی آخرین ارتقا، در صورت وجود نسخهٔ قبلی؛ دادهٔ دیتابیس حفظ می‌شود |
 | `myteldesk uninstall` | توقف سرویس و برداشتن اتصال‌های تحت مدیریت نصاب؛ دیتابیس، حساب‌ها، داده، اطلاعات ورود و پشتیبان‌ها باقی می‌مانند |
 | `journalctl -u myteldesk -n 100 --no-pager` | مشاهدهٔ لاگ اخیر سرویس |
@@ -76,9 +76,11 @@ Asterisk 16 از **۹ اکتبر ۲۰۲۳** و Asterisk 18 از **۲۰ اکتب�
 
 WebRTC به داخلی و اطلاعات SIP معتبر، ماژول‌های مناسب Asterisk، TLS مورد اعتماد مرورگر، DTLS/ICE و مسیر صحیح رسانه از میان NAT نیاز دارد. مسیر WebSocket تلفنی محصول `/MytellDesk/sip-ws` است و به WebSocket محلی Asterisk متصل می‌شود. نصاب، ترانک یا اطلاعات داخلی‌های شما را به‌طور خودکار پیکربندی نمی‌کند. [راهنمای رسمی WebRTC در Asterisk](https://docs.asterisk.org/Configuration/WebRTC/Configuring-Asterisk-for-WebRTC-Clients/)
 
-موفقیت `doctor` آمادگی سرویس و اتصال AMI را نشان می‌دهد. تماس ورودی و خروجی، انتقال و **صدای دوطرفه** باید با داخلی‌های مجاز و شبکهٔ واقعی شما جداگانه آزموده شوند.
+موفقیت `doctor` آمادگی سرویس، اتصال AMI و اجرای واقعی مدل VAD را نشان می‌دهد. تماس مرورگری ورودی/خروجی، صدای دوطرفه، نگه‌داشتن، میکروفن و انتقال روی Asterisk 16، 18 و 20 آزمایش شده‌اند؛ جزئیات محیط و شواهد هر نسخه در صفحهٔ انتشار درج می‌شود. شبکهٔ NAT، داخلی‌ها و مسیر رسانهٔ هر مرکز تلفن باید مطابق محیط همان مرکز تنظیم شوند.
 
-تحلیل سکوت/گفتار **VAD اختیاری** است. سورس و فایل وابستگی‌های آن در `backend/vad/` همراه انتشار قرار دارند؛ نصاب محیط Python، مدل یا وابستگی‌های سنگین VAD را خودکار نصب نمی‌کند. اعلان Web Push، اعلان موبایل و اتصال CRM نیز به تنظیمات اختصاصی خود نیاز دارند.
+تحلیل سکوت/گفتار **VAD به‌صورت خودکار نصب و بررسی می‌شود**: Python 3.11 مستقل، وابستگی‌های قفل‌شده و مدل Silero با هش مشخص. مدل همراه انتشار است و اجرای آن از CPU استفاده می‌کند. نصاب بسته‌های Python را با یک فرمان محدود از BaseOS/AppStream رسمی Rocky نصب می‌کند و Python اصلی ایزابل را حفظ می‌کند. مراحل شکست‌خورده قابل تکرارند و محیط قبلی در صورت شکست فعال‌سازی حفظ می‌شود.
+
+وضعیت تحلیل گفتار در تنظیمات ضبط نمایش داده می‌شود. نصب موتور، تنظیمات فعلی ضبط و نگهداری فایل‌ها را حفظ می‌کند؛ مدیر سیاست ضبط را در همان صفحه انتخاب می‌کند. [جزئیات runtime و مجوزهای VAD](docs/vad-runtime.md). اعلان Web Push، اعلان موبایل و اتصال CRM به تنظیمات اختصاصی خود نیاز دارند.
 
 ## سورس، مجوز و توسعه
 
@@ -107,6 +109,6 @@ MytellDesk is the Persian/RTL MyTel operator workspace, distributed independentl
 
 Read `/etc/myteldesk/initial-admin.txt` as root, then choose **Desk account** on the sign-in screen. The generated local administrator password is unique; existing users are not reset on restart or update. Re-run the installer to update. Use `myteldesk doctor`, `myteldesk rollback` or `myteldesk uninstall` for maintenance; uninstall retains data and credentials.
 
-Existing legacy OpDesk deployments require a separately reviewed migration. The installer reloads AMI configuration and Apache and restarts its own service; it does not restart Asterisk. See each release's notes for the actual tested host and feature scope. Live WebRTC calls and two-way audio require separate validation. VAD is optional and its Python environment is not installed automatically.
+Existing legacy OpDesk deployments require a separately reviewed migration. The installer reloads AMI configuration and Apache and restarts its own service; it does not restart Asterisk. See each release's notes for the actual tested host and feature scope. Live WebRTC calls and two-way audio require separate validation. CPU VAD is provisioned and inference-tested automatically in an isolated Python 3.11 environment with hash-locked dependencies and the bundled verified Silero model. Existing recording/retention policies and Issabel’s system Python are preserved.
 
 GPLv3; based on [OpDesk](https://github.com/Ibrahimgamal99/OpDesk). Complete corresponding source and third-party notices accompany release archives.
