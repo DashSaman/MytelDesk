@@ -37,7 +37,7 @@ cat /etc/myteldesk/initial-admin.txt
 | سرویس‌ها | `asterisk`، `mariadb` و `httpd` فعال |
 | Apache | ماژول‌های `proxy`، `proxy_http` و `proxy_wstunnel` |
 | دسترسی | root، دسترسی محلی به MariaDB از تنظیمات Issabel و AMI فعال |
-| دریافت فایل | دسترسی HTTPS به GitHub و nodejs.org |
+| دریافت فایل | دسترسی HTTPS به GitHub، nodejs.org، files.pythonhosted.org و مخازن رسمی BaseOS/AppStream راکی |
 | مرورگر | مرورگر به‌روز؛ HTTPS مورد اعتماد برای میکروفون و قابلیت‌های مرورگری |
 
 این جدول، نسخه‌های پذیرفته‌شده در بررسی اولیهٔ نصاب را مشخص می‌کند. دامنهٔ نصب‌های واقعی و مسیرهای آزموده‌شدهٔ هر نسخه در یادداشت همان [انتشار](https://github.com/DashSaman/MytelDesk/releases) ثبت می‌شود؛ پذیرش نسخه توسط نصاب، نتیجهٔ آزمون همهٔ قابلیت‌های تلفنی روی آن نسخه نیست.

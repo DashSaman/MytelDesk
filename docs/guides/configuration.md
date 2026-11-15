@@ -1,3 +1,5 @@
+> **Deployment paths in this upstream guide are historical.** Installer-managed MytelDesk uses `/etc/myteldesk/myteldesk.env`, the `myteldesk` service and an isolated, automatically verified CPU VAD runtime. Follow the current [installation and recovery instructions](../../README.md) and [VAD runtime reference](../vad-runtime.md) for environment paths, restart commands and diagnostics. The Settings and API behavior below remains product reference.
+
 # Configuration
 
 OpDesk is configured in two places. The `backend/.env` file holds what the server needs
