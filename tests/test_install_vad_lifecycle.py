@@ -93,7 +93,12 @@ class VadInstallLifecycle(unittest.TestCase):
                 self.readiness_output = output.getvalue()
 
     def test_cold_activation_can_finish_after_the_old_300_second_deadline(self):
-        self.install_with_real_health(360)
+        failure = None
+        try:
+            self.install_with_real_health(360)
+        except RuntimeError as error:
+            failure = error
+        self.assertIsNone(failure, 'Cold activation stopped before simulated readiness: ' + str(failure))
         self.assertEqual(self.elapsed, 360)
         self.assertEqual(json.loads(self.state_file.read_text())['status'], 'ready')
         mod.wait_health.assert_called_once_with(timeout=900)
@@ -117,6 +122,15 @@ class VadInstallLifecycle(unittest.TestCase):
         self.assertFalse(self.unit.exists()); self.assertFalse(self.proxy.exists()); self.assertFalse(self.ami.exists())
         self.assertIn(['systemctl', 'stop', 'myteldesk'], self.calls)
         self.assertNotIn('Installation verified:', self.readiness_output)
+
+    def test_upgrade_keeps_300_second_budget_and_rolls_back_on_late_readiness(self):
+        self.existing(); before = self.env.read_bytes()
+        with self.assertRaisesRegex(RuntimeError, 'Backend/AMI did not become ready'):
+            self.install_with_real_health(360)
+        self.assertEqual(self.elapsed, 300)
+        self.assertEqual(self.env.read_bytes(), before)
+        self.assertEqual(json.loads(self.state_file.read_text())['status'], 'ready')
+        mod.wait_health.assert_called_once_with()
 
     def test_fresh_download_failure_can_be_retried_without_manual_directory_deletion(self):
         self.provision.side_effect=[RuntimeError('temporary download failure'),self.vad]
