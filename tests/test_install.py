@@ -14,6 +14,16 @@ mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 
 class InstallTests(unittest.TestCase):
+    def test_fresh_database_on_slow_disk_can_take_over_ninety_seconds(self):
+        clock=[0]
+        def response(*_args,**_kwargs):
+            if clock[0]<120: raise OSError('starting')
+            return io.BytesIO(b'{"status":"ok","ami_connected":true}')
+        def sleep(_seconds): clock[0]+=30
+        with mock.patch.object(mod.time,'time',side_effect=lambda:clock[0]), mock.patch.object(mod.time,'sleep',side_effect=sleep), mock.patch.object(mod,'urlopen',side_effect=response):
+            self.assertEqual(mod.wait_health()['status'],'ok')
+        self.assertGreaterEqual(clock[0],120)
+
     def test_private_node_extraction_ignores_archive_owner_and_umask(self):
         from types import SimpleNamespace
         with tempfile.TemporaryDirectory() as d:
