@@ -21,6 +21,14 @@ const PRINCIPALS: Record<string, Record<string, unknown>> = {
 
 jest.mock('../src/core/security', () => ({
   authenticateWsToken: jest.fn(async (t: string) => PRINCIPALS[t] ?? null),
+  // These fixtures represent native Desk sessions, not Issabel panel sessions.
+  decodeAccessToken: jest.fn(async (t: string) => {
+    const principal = PRINCIPALS[t];
+    if (!principal) return null;
+    const now = Math.floor(Date.now() / 1000);
+    return { sub: String(principal.id), username: principal.username, role: principal.role,
+      auth_source: 'native', iat: now, exp: now + 3600 };
+  }),
 }));
 jest.mock('../src/db/db-manager', () => ({
   getExtensionNamesFromDb: jest.fn(async () => ({ '101': 'Alice', '102': 'Bob', '103': 'Carol' })),
