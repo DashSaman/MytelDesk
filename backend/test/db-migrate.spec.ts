@@ -17,6 +17,9 @@ jest.mock('mysql2/promise', () => {
 });
 
 import * as fs from 'fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import * as bcrypt from 'bcryptjs';
 import * as mysql from 'mysql2/promise';
 import * as pool from '../src/db/pool';
 import { setLogLevel } from '../src/core/logger';
@@ -171,6 +174,9 @@ describe('applyColumnGuards', () => {
 
 describe('migrate', () => {
   const env0 = { ...process.env };
+  const bootstrapHash = bcrypt.hashSync('local migration fixture only', 4);
+  let bootstrapDir: string;
+  let bootstrapFile: string;
   let settings: Record<string, string | null>;
   let counts: Record<string, number>;
   let executed: [string, unknown[]][];
@@ -180,6 +186,11 @@ describe('migrate', () => {
     process.env.OPDESK_DOMAIN = 'pbx.example.test';
     delete process.env.NGINX_HTTPS_PORT;
     delete process.env.OPDESK_ADMIN_PASSWORD;
+    delete process.env.OPDESK_BASE_PATH;
+    bootstrapDir = fs.mkdtempSync(path.join(os.tmpdir(), 'myteldesk-bootstrap-'));
+    bootstrapFile = path.join(bootstrapDir, 'admin-init.hash');
+    fs.writeFileSync(bootstrapFile, bootstrapHash + '\n');
+    process.env.OPDESK_ADMIN_INIT_HASH_FILE = bootstrapFile;
     (mysql.createConnection as jest.Mock).mockImplementation(async () => serverConn);
     serverConn.query.mockResolvedValue([[{ Database: 'OpDesk' }], []]);
     serverConn.end.mockResolvedValue(undefined);
@@ -200,8 +211,14 @@ describe('migrate', () => {
       executed.push([sql, params]);
       if (/^INSERT INTO OpDesk_settings/.test(sql)) settings[String(params[0])] = params[1] as string;
       if (/^INSERT IGNORE INTO OpDesk_settings/.test(sql) && !(String(params[0]) in settings)) settings[String(params[0])] = params[1] as string;
+      if (/^INSERT IGNORE INTO users/.test(sql)) counts.users++;
       return { affectedRows: 1, insertId: 1 };
     });
+  });
+
+  afterEach(() => {
+    if (fs.existsSync(bootstrapFile)) fs.unlinkSync(bootstrapFile);
+    fs.rmdirSync(bootstrapDir);
   });
 
   afterAll(() => {
@@ -217,7 +234,8 @@ describe('migrate', () => {
     expect(sqls().some((s) => /asterisk/i.test(s))).toBe(false);
 
     const admin = executed.find(([s]) => /^INSERT IGNORE INTO users/.test(s));
-    expect(admin?.[1]).toEqual([mig.DEFAULT_ADMIN_PASSWORD_HASH]);
+    expect(admin?.[1]).toEqual([bootstrapHash]);
+    expect(fs.existsSync(bootstrapFile)).toBe(false);
 
     const reasons = executed.filter(([s]) => /^INSERT IGNORE INTO pause_reasons/.test(s)).map(([, p]) => p[0]);
     expect(reasons).toEqual(['break', 'lunch', 'meeting', 'training', '__WRAPUP']);
@@ -244,12 +262,111 @@ describe('migrate', () => {
     expect(settings.CRM_SYNC_FIELDS).toBe('caller,call_id');
   });
 
-  it('applies OPDESK_ADMIN_PASSWORD to the admin account on every start', async () => {
+  it('never resets existing users from a stale password or bootstrap hash', async () => {
     counts = { users: 1, pause_reasons: 1 };
     process.env.OPDESK_ADMIN_PASSWORD = 'n3w-pass';
     await mig.migrate();
-    const upd = executed.find(([s]) => /^UPDATE users SET password_hash/.test(s));
-    expect(String(upd?.[1][0])).toMatch(/^\$2[aby]\$12\$/);
+    expect(sqls().filter((s) => /(?:INTO|UPDATE) users/.test(s))).toEqual([]);
+    expect(fs.readFileSync(bootstrapFile, 'utf8').trim()).toBe(bootstrapHash);
+  });
+
+  it('does not create a public default admin when bootstrap is unconfigured', async () => {
+    delete process.env.OPDESK_ADMIN_INIT_HASH_FILE;
+    await mig.migrate();
+    expect(sqls().filter((s) => /(?:INTO|UPDATE) users/.test(s))).toEqual([]);
+    expect(settings.WEBRTC_PBX_SERVER).toBe('wss://pbx.example.test/sip-ws');
+  });
+
+  it('does not use a plaintext environment password even for a fresh database', async () => {
+    delete process.env.OPDESK_ADMIN_INIT_HASH_FILE;
+    process.env.OPDESK_ADMIN_PASSWORD = 'obsolete fixture password';
+    await mig.migrate();
+    expect(sqls().filter((s) => /(?:INTO|UPDATE) users/.test(s))).toEqual([]);
+  });
+
+  it('does not seed an administrator when the requested bootstrap file is missing', async () => {
+    fs.unlinkSync(bootstrapFile);
+    await mig.migrate();
+    expect(sqls().filter((s) => /(?:INTO|UPDATE) users/.test(s))).toEqual([]);
+  });
+
+  it.each(['', 'plaintext is not a hash', '$2b$03$' + 'a'.repeat(53), '$2b$99$' + 'a'.repeat(53)])(
+    'retains an invalid bootstrap file without creating an account (%#)', async (invalid) => {
+      fs.writeFileSync(bootstrapFile, invalid);
+      await mig.migrate();
+      expect(sqls().filter((s) => /(?:INTO|UPDATE) users/.test(s))).toEqual([]);
+      expect(fs.readFileSync(bootstrapFile, 'utf8')).toBe(invalid);
+    },
+  );
+
+  it('consumes the bootstrap hash only after a successful initial INSERT', async () => {
+    const executeNormally = ex.getMockImplementation()!;
+    ex.mockImplementation(async (sql: string, params: unknown[]) => {
+      if (/^INSERT IGNORE INTO users/.test(sql)) expect(fs.readFileSync(bootstrapFile, 'utf8').trim()).toBe(bootstrapHash);
+      return executeNormally(sql, params);
+    });
+    await mig.migrate();
+    expect(executed.find(([s]) => /^INSERT IGNORE INTO users/.test(s))?.[1]).toEqual([bootstrapHash]);
+    expect(fs.existsSync(bootstrapFile)).toBe(false);
+  });
+
+  it('retains the bootstrap file when INSERT fails so a later start can recover', async () => {
+    const executeNormally = ex.getMockImplementation()!;
+    ex.mockImplementation(async (sql: string, params: unknown[]) => {
+      if (/^INSERT IGNORE INTO users/.test(sql)) throw new Error('fixture INSERT failure');
+      return executeNormally(sql, params);
+    });
+    await mig.migrate();
+    expect(fs.readFileSync(bootstrapFile, 'utf8').trim()).toBe(bootstrapHash);
+    expect(sqls().filter((s) => /^UPDATE users/.test(s))).toEqual([]);
+  });
+
+  it('retains the bootstrap file when a concurrent INSERT was ignored', async () => {
+    const executeNormally = ex.getMockImplementation()!;
+    ex.mockImplementation(async (sql: string, params: unknown[]) => {
+      if (/^INSERT IGNORE INTO users/.test(sql)) return { affectedRows: 0, insertId: 0 };
+      return executeNormally(sql, params);
+    });
+    await mig.migrate();
+    expect(fs.readFileSync(bootstrapFile, 'utf8').trim()).toBe(bootstrapHash);
+    expect(sqls().filter((s) => /^UPDATE users/.test(s))).toEqual([]);
+  });
+
+  it('does not re-seed or reset an account on the next startup', async () => {
+    await mig.migrate();
+    fs.writeFileSync(bootstrapFile, bcrypt.hashSync('different unused fixture', 4));
+    executed = [];
+    await mig.migrate();
+    expect(sqls().filter((s) => /(?:INTO|UPDATE) users/.test(s))).toEqual([]);
+    expect(fs.existsSync(bootstrapFile)).toBe(true);
+  });
+
+  it.each(['/MytellDesk/', '/MytellDesk'])('seeds the standalone SIP websocket path for base %s', async (base) => {
+    process.env.OPDESK_BASE_PATH = base;
+    await mig.migrate();
+    expect(settings.WEBRTC_PBX_SERVER).toBe('wss://pbx.example.test/MytellDesk/sip-ws');
+  });
+
+  it('includes a nondefault public port in the standalone default', async () => {
+    process.env.OPDESK_BASE_PATH = '/MytellDesk/';
+    process.env.NGINX_HTTPS_PORT = '8443';
+    await mig.migrate();
+    expect(settings.WEBRTC_PBX_SERVER).toBe('wss://pbx.example.test:8443/MytellDesk/sip-ws');
+  });
+
+  it('keeps an existing SIP endpoint when a new application base is configured', async () => {
+    process.env.OPDESK_BASE_PATH = '/MytellDesk/';
+    settings = { WEBRTC_PBX_SERVER: 'wss://existing.example.test/custom-ws' };
+    await mig.migrate();
+    expect(settings.WEBRTC_PBX_SERVER).toBe('wss://existing.example.test/custom-ws');
+  });
+
+  it('preserves the legacy path when applying its existing port-only migration', async () => {
+    process.env.OPDESK_BASE_PATH = '/MytellDesk/';
+    process.env.NGINX_HTTPS_PORT = '8443';
+    settings = { WEBRTC_PBX_SERVER: 'wss://pbx.example.test/sip-ws' };
+    await mig.migrate();
+    expect(settings.WEBRTC_PBX_SERVER).toBe('wss://pbx.example.test:8443/sip-ws');
   });
 
   it('rewrites a port-less WEBRTC_PBX_SERVER once Nginx runs on another port', async () => {
