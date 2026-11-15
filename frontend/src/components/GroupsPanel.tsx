@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
-  Save, Plus, Pencil, Trash2, Shield, Phone, List, Group, ChevronDown, Users,
+  Save, Plus, Pencil, Trash2, Shield, Phone, List, Group, ChevronDown, Users, Loader2,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { fetchWithAuth, getUser } from '../auth';
@@ -60,6 +60,9 @@ export function GroupsPanel(props: GroupsPanelProps) {
   const [queues, setQueues] = useState<QueueOption[]>([]);
   const [users, setUsers] = useState<UserOption[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [editingGroup, setEditingGroup] = useState<OpDeskGroup | null>(null);
   const [expandedGroupId, setExpandedGroupId] = useState<number | null>(null);
@@ -81,6 +84,7 @@ export function GroupsPanel(props: GroupsPanelProps) {
   // "Group created/updated" notice the instant it was set.
   const loadData = useCallback(async ({ keepMessage = false }: { keepMessage?: boolean } = {}) => {
     setLoading(true);
+    setLoadFailed(false);
     if (!keepMessage) setMessage(null);
     try {
       const [groupsRes, agentsRes, queuesRes, usersRes] = await Promise.all([
@@ -105,11 +109,13 @@ export function GroupsPanel(props: GroupsPanelProps) {
         const d = await usersRes.json();
         setUsers((d.users || []).map((u: { id: number; username: string }) => ({ id: u.id, username: u.username })));
       }
-      if (!groupsRes.ok && groupsRes.status === 403) {
-        setMessage({ type: 'error', text: t('groups.adminRequired') });
+      if ([groupsRes, agentsRes, queuesRes, usersRes].some(response => !response.ok)) {
+        setLoadFailed(true);
+        setMessage({ type: 'error', text: t(groupsRes.status === 403 ? 'groups.adminRequired' : 'groups.loadError') });
       }
     } catch (e) {
       console.error(e);
+      setLoadFailed(true);
       setMessage({ type: 'error', text: t('groups.loadError') });
     } finally {
       setLoading(false);
@@ -127,12 +133,14 @@ export function GroupsPanel(props: GroupsPanelProps) {
   }, []);
 
   const openCreate = () => {
+    if (loadFailed) return;
     resetForm();
     setMessage(null);
     setFormOpen(true);
   };
 
   const startEdit = (g: OpDeskGroup) => {
+    if (loadFailed) return;
     setMessage(null);
     setExpandedGroupId(null);
     setEditingGroup(g);
@@ -147,11 +155,14 @@ export function GroupsPanel(props: GroupsPanelProps) {
 
   const handleCreateOrUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (savingRef.current || loadFailed) return;
     setMessage(null);
     if (!form.name.trim()) {
       setMessage({ type: 'error', text: t('groups.groupNameRequired') });
       return;
     }
+    savingRef.current = true;
+    setSaving(true);
     try {
       if (editingGroup) {
         const res = await fetchWithAuth(`/api/settings/groups/${editingGroup.id}`, {
@@ -184,6 +195,9 @@ export function GroupsPanel(props: GroupsPanelProps) {
       loadData({ keepMessage: true });
     } catch (err: unknown) {
       setMessage({ type: 'error', text: err instanceof Error ? err.message : t('common.requestFailed', 'Request failed') });
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
     }
   };
 
@@ -236,7 +250,8 @@ export function GroupsPanel(props: GroupsPanelProps) {
 
   if (!isAdmin) {
     return (
-      <Page icon={Users} title={t('nav.teams', 'Teams')} tabs={tabs}>
+      <Page icon={Users} title={t('nav.teams', 'Teams')}
+      description={t('workspace.pages.groups')} tabs={tabs}>
         <EmptyState icon={Shield} title={t('groups.adminOnly')} />
       </Page>
     );
@@ -244,7 +259,8 @@ export function GroupsPanel(props: GroupsPanelProps) {
 
   if (loading) {
     return (
-      <Page icon={Users} title={t('nav.teams', 'Teams')} tabs={tabs}>
+      <Page icon={Users} title={t('nav.teams', 'Teams')}
+      description={t('workspace.pages.groups')} tabs={tabs}>
         <Loading label={t('groups.loading')} />
       </Page>
     );
@@ -274,10 +290,11 @@ export function GroupsPanel(props: GroupsPanelProps) {
     <Page
       icon={Users}
       title={t('nav.teams', 'Teams')}
+      description={t('workspace.pages.groups')}
       tabs={tabs}
       count={groups.length}
       actions={
-        <button type="button" className="btn btn-primary" onClick={openCreate}>
+        <button type="button" className="btn btn-primary" onClick={openCreate} disabled={loadFailed}>
           <Plus size={14} />
           {t('groups.addGroup')}
         </button>
@@ -305,14 +322,14 @@ export function GroupsPanel(props: GroupsPanelProps) {
     >
       {/* Messages land on the list once the Modal is closed; while it is open
           they belong to the form and show at the top of its body. */}
-      {!formOpen && <Alert tone={message?.type === 'success' ? 'success' : 'error'}>{message?.text}</Alert>}
+      {!formOpen && <Alert tone={message?.type === 'success' ? 'success' : 'error'} action={loadFailed ? <button type="button" className="btn" onClick={() => void loadData()}>{t('common.retry')}</button> : undefined}>{message?.text}</Alert>}
 
       <Table
         framed
         caption={t('groups.title')}
         rows={filtered}
         rowKey={g => g.id}
-        empty={groups.length === 0
+        empty={loadFailed ? undefined : groups.length === 0
           ? <EmptyState icon={Group} title={t('groups.noGroups')} />
           : <EmptyState icon={Group} title={t('groups.noMatches', 'No groups match "{{query}}"', { query: search })} />}
         onRowClick={g => toggleExpanded(g.id)}
@@ -366,6 +383,7 @@ export function GroupsPanel(props: GroupsPanelProps) {
                   type="button"
                   className="btn btn-ghost btn-sm btn-icon"
                   onClick={e => { e.stopPropagation(); startEdit(g); }}
+                  disabled={loadFailed}
                   title={t('groups.editGroup')}
                   aria-label={t('groups.editGroup')}
                 >
@@ -397,9 +415,9 @@ export function GroupsPanel(props: GroupsPanelProps) {
             <button type="button" className="btn" onClick={resetForm}>
               {t('common.cancel')}
             </button>
-            <button type="submit" form="group-form" className="btn btn-primary">
-              <Save size={14} />
-              {editingGroup ? t('groups.updateGroup') : t('groups.addGroup')}
+            <button type="submit" form="group-form" className="btn btn-primary" disabled={saving || loadFailed} aria-busy={saving}>
+              {saving ? <Loader2 size={14} className="spinner" /> : <Save size={14} />}
+              {saving ? t('common.saving') : editingGroup ? t('groups.updateGroup') : t('groups.addGroup')}
             </button>
           </>
         }

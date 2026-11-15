@@ -36,7 +36,7 @@ interface Props { dateRange: DateRange }
  */
 export function AnalyticsOverview({ dateRange }: Props) {
   const { t } = useTranslation();
-  const { data, loading, error } = useAnalyticsFetch(
+  const { data, loading, error, retry } = useAnalyticsFetch(
     async () => {
       const params = buildDateParams(dateRange.from, dateRange.to);
       const [kpis, trendResp] = await Promise.all([
@@ -61,7 +61,7 @@ export function AnalyticsOverview({ dateRange }: Props) {
   }
 
   if (error || !kpis) {
-    return <Alert>{t('analytics.error')}</Alert>;
+    return <Alert action={<button type="button" className="btn" onClick={retry}>{t('common.retry')}</button>}>{t('analytics.error')}</Alert>;
   }
 
   const cur = kpis.current;

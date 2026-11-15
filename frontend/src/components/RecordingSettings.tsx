@@ -9,6 +9,7 @@ import {
 } from './ui';
 import { StatCard, StatRow } from './FigureCards';
 import type { SectionCard } from './SettingsPanel';
+import { VoiceAnalysisStatus } from './VoiceAnalysisStatus';
 import '../styles/settings-extra.css';
 
 /* Call Recording settings: one Card, two inner tabs.
@@ -98,6 +99,8 @@ export function RecordingSettings({ card, isAdmin, onStatus }: RecordingSettings
   // playback and point retention at a tree OpDesk does not write.
   const [recDir, setRecDir] = useState('');
   const [retentionSaving, setRetentionSaving] = useState(false);
+  const [retentionReady, setRetentionReady] = useState(false);
+  const [retentionLoading, setRetentionLoading] = useState(false);
   const [cleanupRunning, setCleanupRunning] = useState(false);
   const [stats, setStats] = useState<StorageStats | null>(null);
   const [storageMessage, setStorageMessage] = useState<Message>(null);
@@ -134,7 +137,10 @@ export function RecordingSettings({ card, isAdmin, onStatus }: RecordingSettings
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAdmin, t]);
 
-  const loadRetention = useCallback(async () => {
+  const loadRetention = useCallback(async (clearMessage = true) => {
+    setRetentionReady(false);
+    setRetentionLoading(true);
+    if (clearMessage) setStorageMessage(null);
     try {
       const data = await api<RetentionConfig>('/api/recording/retention');
       // 0 and null both mean "off": show a blank field, never a literal 0 that reads as an
@@ -143,8 +149,11 @@ export function RecordingSettings({ card, isAdmin, onStatus }: RecordingSettings
       setLocalMaxGb(data.local_max_bytes ? String(Math.round(data.local_max_bytes / GB)) : '');
       setVadDeleteLegs(data.vad_delete_legs !== false);
       setRecDir(data.root_dir || '');
+      setRetentionReady(true);
     } catch (e) {
       setStorageMessage({ type: 'error', text: messageOf(e, t('settings.recording.retentionLoadFailed', 'Could not read the retention settings.')) });
+    } finally {
+      setRetentionLoading(false);
     }
   }, [t]);
 
@@ -249,6 +258,7 @@ export function RecordingSettings({ card, isAdmin, onStatus }: RecordingSettings
   };
 
   const saveRetention = async () => {
+    if (!retentionReady || retentionSaving) return;
     setRetentionSaving(true);
     setStorageMessage(null);
     try {
@@ -262,7 +272,7 @@ export function RecordingSettings({ card, isAdmin, onStatus }: RecordingSettings
         },
       });
       setStorageMessage({ type: 'success', text: t('settings.recording.retentionSaved', 'Retention settings saved.') });
-      loadRetention();
+      loadRetention(false);
       loadStats();
     } catch (e) {
       setStorageMessage({ type: 'error', text: messageOf(e, t('settings.recording.retentionSaveFailed', 'Could not save the retention settings.')) });
@@ -272,6 +282,7 @@ export function RecordingSettings({ card, isAdmin, onStatus }: RecordingSettings
   };
 
   const runCleanupNow = async () => {
+    if (!retentionReady || cleanupRunning) return;
     setCleanupRunning(true);
     setStorageMessage(null);
     try {
@@ -304,11 +315,11 @@ export function RecordingSettings({ card, isAdmin, onStatus }: RecordingSettings
 
   const footer = onStorageTab ? (
     <>
-      <button type="button" className="btn" disabled={cleanupRunning} onClick={runCleanupNow}>
+      <button type="button" className="btn" disabled={cleanupRunning || !retentionReady} onClick={runCleanupNow}>
         {cleanupRunning ? <Loader2 size={14} className="spinner" /> : <Trash2 size={14} />}
         {t('settings.recording.cleanup', 'Clean up now')}
       </button>
-      <button type="button" className="btn btn-primary" disabled={retentionSaving} onClick={saveRetention}>
+      <button type="button" className="btn btn-primary" disabled={retentionSaving || !retentionReady} onClick={saveRetention}>
         {retentionSaving ? <Loader2 size={14} className="spinner" /> : <Save size={14} />}
         {retentionSaving ? t('settings.recording.saving', 'Saving…') : t('settings.recording.saveChanges', 'Save changes')}
       </button>
@@ -317,10 +328,11 @@ export function RecordingSettings({ card, isAdmin, onStatus }: RecordingSettings
 
   return (
     <Card {...card} footer={footer} bodyClassName="u-col u-gap-4">
+      {isAdmin && <VoiceAnalysisStatus />}
       {loading && !policy ? (
         <Loading size="sm" label={t('settings.recording.loading', 'Loading the recording policy…')} />
       ) : !policy ? (
-        <Alert tone="error">{loadError || t('settings.recording.loadError', 'Could not load the recording policy.')}</Alert>
+        <Alert tone="error" action={<button type="button" className="btn" onClick={() => void loadPolicy()}>{t('common.retry')}</button>}>{loadError || t('settings.recording.loadError', 'Could not load the recording policy.')}</Alert>
       ) : (
         <>
           {showTabs && (
@@ -336,7 +348,7 @@ export function RecordingSettings({ card, isAdmin, onStatus }: RecordingSettings
           )}
 
           {(!onStorageTab) && (
-            <div className="rec-tab-panel">
+            <div className="rec-tab-panel" id="tabpanel-policy" role={showTabs ? 'tabpanel' : undefined} aria-labelledby={showTabs ? 'tab-policy' : undefined}>
               <Toggle
                 checked={policy.enabled}
                 onChange={setMaster}
@@ -498,7 +510,8 @@ export function RecordingSettings({ card, isAdmin, onStatus }: RecordingSettings
           )}
 
           {onStorageTab && (
-            <div className="rec-tab-panel">
+            <div className="rec-tab-panel" id="tabpanel-local" role="tabpanel" aria-labelledby="tab-local">
+              {retentionLoading && <Loading size="sm" label={t('common.loading')} />}
               <StatRow>
                 <StatCard
                   label={t('settings.recording.storageUsed', 'Storage used')}
@@ -551,6 +564,7 @@ export function RecordingSettings({ card, isAdmin, onStatus }: RecordingSettings
                   >
                     <input
                       id="rec-days"
+                      disabled={!retentionReady || retentionSaving}
                       aria-label={t('settings.recording.localDays', 'Delete recordings after (days)')}
                       className="form-input"
                       type="number"
@@ -567,6 +581,7 @@ export function RecordingSettings({ card, isAdmin, onStatus }: RecordingSettings
                   >
                     <input
                       id="rec-max"
+                      disabled={!retentionReady || retentionSaving}
                       aria-label={t('settings.recording.localMax', 'Max storage (GB)')}
                       className="form-input"
                       type="number"
@@ -582,13 +597,14 @@ export function RecordingSettings({ card, isAdmin, onStatus }: RecordingSettings
               <FormSection title={t('settings.recording.vadFiles', 'Voice Activity files')}>
                 <Toggle
                   checked={vadDeleteLegs}
+                  disabled={!retentionReady || retentionSaving}
                   onChange={setVadDeleteLegs}
                   label={t('settings.recording.vadDelete', 'Delete per-speaker files after analysis')}
                   description={t('settings.recording.vadDeleteDesc', 'The -sp1/-sp2 legs are only needed briefly to compute Voice Activity; on by default.')}
                 />
               </FormSection>
 
-              <Alert tone={storageMessage?.type === 'success' ? 'success' : 'error'}>{storageMessage?.text}</Alert>
+              <Alert tone={storageMessage?.type === 'success' ? 'success' : 'error'} action={!retentionReady && !retentionLoading ? <button type="button" className="btn" onClick={() => void loadRetention()}>{t('common.retry')}</button> : undefined}>{storageMessage?.text}</Alert>
             </div>
           )}
         </>

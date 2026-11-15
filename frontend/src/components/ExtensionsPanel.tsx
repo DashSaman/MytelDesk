@@ -185,6 +185,7 @@ export function ExtensionsPanel({
     <Page
       icon={Phone}
       title={t('nav.extensions')}
+      description={t('workspace.pages.extensions')}
       count={rows.length}
       actions={
         <>

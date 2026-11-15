@@ -4,7 +4,7 @@ import { BellRing, CalendarDays, Clock, Hourglass, LayoutDashboard, Phone, Radio
 import { LineChart, Line, Tooltip as ChartTooltip, ResponsiveContainer } from 'recharts';
 import type { AppState, ExecutiveKPIResponse, CallLogRecord, VolumeTrendPoint } from '../types';
 import { fetchWithAuth, getUser } from '../auth';
-import { fmtTimer, parseClock } from '../lib/format';
+import { fmtTimer, parseClock, uiLocale } from '../lib/format';
 import { Alert, Badge, EmptyState, Loading, Page, SegmentedBar, Tooltip } from './ui';
 import { todayStr } from './analyticsUtils';
 import { memberBucket } from './queueMemberState';
@@ -213,12 +213,13 @@ export function DashboardPanel({ state, connected, lastUpdate }: DashboardPanelP
   const liveBadge = (
     <Badge tone={connected ? 'live' : 'neutral'} dot>
       {connected ? t('common.live', 'Live') : t('header.disconnected')}
-      {lastUpdate && <span className="u-mono u-fg-muted">{lastUpdate.toLocaleTimeString()}</span>}
+      {lastUpdate && <span className="u-mono u-fg-muted">{lastUpdate.toLocaleTimeString(uiLocale(), { hour12: false })}</span>}
     </Badge>
   );
 
   return (
-    <Page icon={LayoutDashboard} title={t('nav.dashboard', 'Dashboard')} actions={liveBadge}>
+    <Page icon={LayoutDashboard} title={t('nav.dashboard', 'Dashboard')}
+      description={t('workspace.pages.dashboard')} actions={liveBadge}>
       <div className="dashboard-content">
         {!state ? (
           <Loading label={t('dashboard.waitingForData', 'Waiting for live data…')} />

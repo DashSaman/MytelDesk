@@ -1,3 +1,4 @@
+import { uiLocale } from '../lib/format';
 import { useState } from 'react';
 import type React from 'react';
 import { useTranslation } from 'react-i18next';
@@ -28,7 +29,7 @@ function sortRows(rows: AgentAdherenceRow[], key: SortKey, dir: SortDir): AgentA
 function fmtClock(iso: string | null): string {
   if (!iso) return '—';
   const d = new Date(iso);
-  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return d.toLocaleTimeString(uiLocale(), { hour: '2-digit', minute: '2-digit' });
 }
 
 interface Props { dateRange: DateRange }
@@ -53,7 +54,7 @@ export function AnalyticsAdherence({ dateRange }: Props) {
   const [exporting, setExporting] = useState<'csv' | 'xlsx' | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
   const [traceFor, setTraceFor] = useState<AgentAdherenceRow | null>(null);
-  const { data, loading, error } = useAnalyticsFetch(
+  const { data, loading, error, retry } = useAnalyticsFetch(
     () => {
       const params = buildDateParams(dateRange.from, dateRange.to);
       return analyticsGet<{ agents: AgentAdherenceRow[] }>(`/api/analytics/agent-adherence?${params}`);
@@ -99,7 +100,7 @@ export function AnalyticsAdherence({ dateRange }: Props) {
     return <div className="an-loading"><div className="an-spinner" />{t('analytics.loading')}</div>;
   }
   if (error) {
-    return <Alert>{t('analytics.error')}</Alert>;
+    return <Alert action={<button type="button" className="btn" onClick={retry}>{t('common.retry')}</button>}>{t('analytics.error')}</Alert>;
   }
 
   const sorted = sortRows(agents, sortKey, sortDir);

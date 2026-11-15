@@ -45,9 +45,21 @@ export function parseClock(s: string | null | undefined): number {
  * A call's date and time, short ("21 Oct, 14:05"), in the app's language rather than the
  * browser's -- an Arabic UI on an English browser otherwise mixes the two.
  */
+export function uiLocale(): string {
+  return typeof document === 'undefined' ? 'en' : document.documentElement.lang || 'en';
+}
+
+/** Full date/time for records. Persian follows the Persian calendar; API values stay ISO. */
+export function fmtTimestamp(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  return date.toLocaleString(uiLocale(), { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
 export function fmtDateTime(iso: string | null | undefined, locale?: string): string {
   if (!iso) return '—';
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString(locale || undefined, { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+  return d.toLocaleString(locale || uiLocale(), { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false });
 }

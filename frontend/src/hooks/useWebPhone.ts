@@ -279,7 +279,10 @@ export function useWebPhone() {
 
   const addDigit = useCallback((digit: string) => {
     setDialNumber((prev) => prev + digit);
-    if (phoneRef.current?.hasActiveCall) phoneRef.current.sendDTMF(digit);
+  }, []);
+
+  const sendDtmf = useCallback((digit: string) => {
+    phoneRef.current?.sendDTMF(digit);
   }, []);
 
   const clearNumber = useCallback(() => setDialNumber(''), []);
@@ -442,6 +445,7 @@ export function useWebPhone() {
     makeCall,
     hangup,
     addDigit,
+    sendDtmf,
     clearNumber,
     backspace,
     clearLogs,

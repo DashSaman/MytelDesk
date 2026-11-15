@@ -1,3 +1,4 @@
+import { fmtTimestamp } from '../lib/format';
 import { useEffect, useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
@@ -20,7 +21,7 @@ const EXPORT_CAP = 100000;
 
 function fmtDate(d: string | null): string {
   if (!d) return '—';
-  return new Date(d).toLocaleString();
+  return fmtTimestamp(d);
 }
 
 /** A call's direction as the same info pill Call History uses. */
@@ -74,7 +75,7 @@ export function AnalyticsDrilldown({ dateRange }: Props) {
     setPage(1);
   }, [dateRange, queue, agent, direction, disposition]);
 
-  const { data, loading, error } = useAnalyticsFetch(
+  const { data, loading, error, retry } = useAnalyticsFetch(
     () => analyticsGet<DrilldownResponse>(`/api/analytics/drilldown?${buildParams(page)}`),
     [page, buildParams],
   );
@@ -237,7 +238,7 @@ export function AnalyticsDrilldown({ dateRange }: Props) {
         {loading ? (
           <div className="an-loading"><div className="an-spinner" />{t('analytics.loading')}</div>
         ) : error ? (
-          <Alert>{t('analytics.error')}</Alert>
+          <Alert action={<button type="button" className="btn" onClick={retry}>{t('common.retry')}</button>}>{t('analytics.error')}</Alert>
         ) : calls.length === 0 ? (
           <EmptyState size="sm" icon={PhoneCall} title={t('analytics.empty', 'No calls for this period')} />
         ) : (

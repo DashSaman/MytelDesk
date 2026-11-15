@@ -1,3 +1,4 @@
+import { uiLocale } from '../lib/format';
 import type { CSSProperties } from 'react';
 import type { TFunction } from 'i18next';
 import { useTranslation } from 'react-i18next';
@@ -19,12 +20,12 @@ interface Props {
 /** ISO -> local HH:MM:SS. The trace is read against the wall clock, so it keeps seconds. */
 function fmtTime(iso: string | null): string {
   if (!iso) return '—';
-  return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  return new Date(iso).toLocaleTimeString(uiLocale(), { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
 /** ISO -> local date, shown once per session so a multi-day range stays readable. */
 function fmtDay(iso: string): string {
-  return new Date(iso).toLocaleDateString([], { weekday: 'short', day: '2-digit', month: 'short' });
+  return new Date(iso).toLocaleDateString(uiLocale(), { weekday: 'short', day: '2-digit', month: 'short' });
 }
 
 /**

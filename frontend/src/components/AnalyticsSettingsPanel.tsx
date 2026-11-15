@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Save, Loader2, Plus, Trash2 } from 'lucide-react';
+import { Save, Loader2, Plus, Trash2, RefreshCw } from 'lucide-react';
 import { fetchWithAuth } from '../auth';
-import { messageFrom } from '../lib/api';
+import { messageFrom, raiseFor } from '../lib/api';
 import { Alert, Card, Dropdown, FormField, FormRow, FormSection, Loading } from './ui';
 import type { SectionCard } from './SettingsPanel';
 import type { AnalyticsSettings } from '../types';
@@ -48,23 +48,28 @@ export function AnalyticsSettingsPanel({ card, onSaved }: AnalyticsSettingsPanel
   const [addQueue, setAddQueue] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  useEffect(() => {
+  const loadSettings = useCallback(() => {
+    setLoading(true);
+    setLoadError(null);
     fetchWithAuth('/api/analytics/settings')
       .then(async r => {
-        if (!r.ok) return;
+        if (!r.ok) await raiseFor(r);
         const s = (await r.json()) as AnalyticsSettings;
+        if (!s || typeof s.sla_thresholds !== 'object' || !s.sla_thresholds) throw new Error(t('workspace.settingsLoadFailed'));
         setSettings(s);
         setSavedThresholds(s.sla_thresholds ?? {});
       })
-      .catch(e => setMessage({ type: 'error', text: e instanceof Error ? e.message : String(e) }))
+      .catch(() => setLoadError(t('workspace.settingsLoadFailed')))
       .finally(() => setLoading(false));
     // The queue picker for a new override; without it, existing overrides still edit.
     fetchWithAuth('/api/settings/queues')
       .then(async r => { if (r.ok) setQueues(((await r.json()) as { queues?: QueueOption[] }).queues ?? []); })
       .catch(() => setQueues([]));
-  }, []);
+  }, [t]);
+  useEffect(loadSettings, [loadSettings]);
 
   const queueLabel = (ext: string) => {
     const q = queues.find(x => x.extension === ext);
@@ -83,6 +88,7 @@ export function AnalyticsSettingsPanel({ card, onSaved }: AnalyticsSettingsPanel
   }
 
   async function handleSave() {
+    if (loading || loadError || saving) return;
     setSaving(true);
     setMessage(null);
     // Every override as it stands, and null for each one removed since the load.
@@ -116,7 +122,7 @@ export function AnalyticsSettingsPanel({ card, onSaved }: AnalyticsSettingsPanel
   }
 
   const saveButton = (
-    <button type="button" className="btn btn-primary" onClick={handleSave} disabled={saving || loading}>
+    <button type="button" className="btn btn-primary" onClick={handleSave} disabled={saving || loading || !!loadError}>
       {saving ? <Loader2 size={14} className="spinner" /> : <Save size={14} />}
       {saving ? t('common.saving') : t('analytics.settings.save')}
     </button>
@@ -129,6 +135,11 @@ export function AnalyticsSettingsPanel({ card, onSaved }: AnalyticsSettingsPanel
       </Card>
     );
   }
+  if (loadError) return (
+    <Card {...card}>
+      <Alert action={<button type="button" className="btn" onClick={loadSettings}><RefreshCw size={14} />{t('common.retry')}</button>}>{loadError}</Alert>
+    </Card>
+  );
 
   const seconds = t('analytics.settings.unitSeconds', 'seconds');
   return (

@@ -329,3 +329,168 @@ button, input, select, textarea { font-family: inherit; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; scroll-behavior: auto !important; }
 }
+
+/* Product workspace: a clear page identity, one filter band and one scroll area. */
+.header-title-compact { display: none; }
+.header-brand > div { min-inline-size: 0; }
+.header-status { flex-shrink: 0; }
+.header-profile-name { max-inline-size: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.main-content { inline-size: auto; flex: 1 1 0%; min-inline-size: 0; }
+.ui-page { flex-shrink: 0; }
+.ui-page-heading { min-inline-size: 0; flex: 1; }
+.ui-page-header { gap: 20px; align-items: center; }
+.ui-page-description { margin: 7px 0 0; color: var(--text-secondary); font-size: 13px; line-height: 1.85; max-inline-size: 65ch; }
+.panel-title { font-weight: 700; line-height: 1.45; flex-wrap: wrap; }
+.panel-title-icon { flex-shrink: 0; color: var(--accent-primary); }
+.ui-page-count { font-variant-numeric: tabular-nums; padding: 3px 8px; min-inline-size: 28px; text-align: center; }
+.panel-header-actions { flex-shrink: 0; flex-wrap: wrap; gap: 8px; }
+.ui-page-toolbar { padding-block: 14px; }
+.ui-toolbar-search { flex: 1 1 260px; max-inline-size: 420px; min-inline-size: min(100%, 200px); }
+.ui-toolbar-filters { flex-wrap: wrap; gap: 8px; }
+.ui-search { min-block-size: 40px; background: var(--control-surface); }
+.ui-search-input { min-inline-size: 0; }
+.ui-tabs { min-inline-size: 0; scrollbar-width: thin; scrollbar-color: var(--border-accent) transparent; }
+.ui-tab { flex-shrink: 0; padding-inline: 4px; font-weight: 500; }
+.ui-tab.active { font-weight: 700; }
+.ui-table { line-height: 1.65; }
+.ui-table th { font-weight: 600; white-space: nowrap; }
+.ui-table td { vertical-align: middle; }
+.ui-table tbody tr:last-child td { border-block-end: 0; }
+.ui-table-wrap--framed { border-radius: 10px; }
+.ui-table .btn-icon { min-inline-size: 34px; min-block-size: 34px; }
+.ui-alert { margin-block: 0 16px; align-items: center; gap: 12px; }
+.ui-alert-text { overflow-wrap: anywhere; }
+.ui-alert .btn { flex-shrink: 0; }
+.ui-empty-desc { max-inline-size: 46ch; }
+.ui-empty-action { margin-block-start: 8px; }
+.ui-loading--md { min-block-size: 230px; }
+.form-input { min-block-size: 42px; line-height: 1.6; }
+.up-form-group > label { color: var(--text-primary); font-weight: 600; line-height: 1.6; }
+.up-hint { line-height: 1.9; }
+.up-form-divider { margin-block: 24px 16px; padding-block-end: 10px; font-size: 13px; font-weight: 650; }
+.up-form-divider.first { margin-block-start: 0; }
+.ui-modal-footer { gap: 10px; background: var(--bg-secondary); border-start-start-radius: 0; border-start-end-radius: 0; }
+.ui-toggle-row { min-inline-size: 0; }
+.extensions-grid { align-items: start; gap: 16px; }
+.extension-card { background: var(--bg-card); padding: 18px; cursor: default; }
+.extension-card::before { box-shadow: none; block-size: 3px; }
+.extension-card::after { display: none; }
+.extension-card.status-ringing { animation: none; border-color: var(--accent-danger); }
+.extension-card:hover .ext-avatar { transform: none; }
+.extension-number { -webkit-text-fill-color: currentcolor; background: none; color: var(--text-primary); }
+.extension-name { font-family: inherit; color: var(--text-secondary); opacity: 1; }
+.extension-info { line-height: 1.8; }
+.queue-card, .agent-board-card { background: var(--bg-card); }
+.queue-member-name { min-inline-size: 0; }
+.dash-hero, [dir='rtl'] .dash-hero { padding: 20px; }
+.dash-hero-value { font-size: 42px; }
+.dcard-value, .dash-hero-value, .u-mono { font-variant-numeric: tabular-nums; }
+
+/* Settings sections stay reachable while editing; forms use the main scroll area. */
+.settings-panel-full { flex: 0 0 auto; min-block-size: 0; }
+.settings-panel-full .panel-content { flex: none; overflow: visible; }
+.settings-workspace { display: grid; grid-template-columns: 176px minmax(0, 1fr); gap: 24px; align-items: start; }
+.settings-section-content { min-inline-size: 0; }
+.settings-section-content > * + * { margin-block-start: 20px; }
+.settings-section-nav { display: flex; flex-direction: column; gap: 22px; padding-block: 8px; }
+.settings-nav-label { color: var(--text-muted); font-size: 11px; line-height: 1.8; margin-block-end: 7px; padding-inline: 10px; }
+.settings-nav-group button { display: flex; align-items: center; gap: 9px; inline-size: 100%; min-block-size: 42px; padding: 9px 10px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--text-secondary); font-size: 12px; text-align: start; line-height: 1.6; cursor: pointer; }
+.settings-nav-group button svg { flex-shrink: 0; }
+.settings-nav-group button:hover { background: var(--bg-secondary); color: var(--text-primary); }
+.settings-nav-group button[aria-current='page'] { background: var(--accent-light); color: var(--accent-primary); border-color: var(--border); font-weight: 700; }
+.settings-section-select { display: none; }
+.settings-workspace .ui-card { box-shadow: none; border-radius: 10px; }
+.settings-workspace .ui-card-header { align-items: flex-start; flex-wrap: wrap; }
+.settings-workspace .ui-card-desc { max-inline-size: 64ch; }
+.settings-workspace .up-form-row { gap: 16px; }
+.sh-home { display: grid; grid-template-columns: 1fr; gap: 24px; }
+.sh-cat { display: grid; grid-template-columns: 155px minmax(0, 1fr); gap: 20px; align-items: start; }
+.sh-cat + .sh-cat { margin-block-start: 0; padding-block-start: 24px; border-block-start: 1px solid var(--border); }
+.sh-cat-label { margin: 9px 0 0; font-size: 13px; color: var(--text-primary); font-weight: 650; }
+.sh-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.sh-card { min-inline-size: 0; padding: 18px; align-items: flex-start; background: var(--bg-card); box-shadow: none; }
+.sh-card:hover { background: var(--bg-secondary); border-color: var(--border-accent); transform: none; }
+.sh-card-title { font-size: 14px; line-height: 1.6; }
+.sh-card-desc { line-height: 1.8; }
+.sh-card-status { margin-block-start: 10px; }
+.sh-card-chevron { align-self: center; }
+.voice-analysis-status { display: flex; align-items: flex-start; gap: 12px; padding: 16px; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 10px; }
+.voice-analysis-status > svg { flex-shrink: 0; color: var(--accent-primary); margin-block-start: 3px; }
+.voice-analysis-copy { flex: 1; min-inline-size: 0; }
+.voice-analysis-copy h3 { font-size: 14px; line-height: 1.7; margin: 0; }
+.voice-analysis-copy p { font-size: 12px; color: var(--text-secondary); line-height: 1.9; margin: 5px 0 10px; }
+.voice-analysis-state { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; }
+.voice-analysis-state--ready { color: var(--accent-success); }
+.voice-analysis-state--unavailable { color: var(--accent-warning); }
+
+@media (max-width: 1100px) {
+  .settings-workspace { grid-template-columns: 1fr; gap: 18px; }
+  .settings-section-nav { display: none; }
+  .settings-section-select { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; font-size: 12px; color: var(--text-secondary); }
+  .settings-section-select select { flex: 1; max-inline-size: 360px; }
+  .sh-cat { grid-template-columns: 1fr; gap: 12px; }
+}
+@media (max-width: 768px) {
+  .header-brand { flex: 1; min-inline-size: 0; }
+  .header-title { max-inline-size: none; font-size: 14px; white-space: nowrap; line-height: 1.5; }
+  .header-title-full { display: none; }
+  .header-title-compact { display: inline; }
+  .header-profile-name, .header-profile-caret { display: none; }
+  .header-profile-btn { inline-size: 40px; min-inline-size: 40px; padding: 0; justify-content: center; }
+  .header-status { gap: 2px; }
+  .ui-page-header { gap: 14px; align-items: stretch; }
+  .ui-page-description { font-size: 12px; line-height: 1.85; }
+  .panel-header-actions { gap: 8px; justify-content: flex-start; }
+  .ui-toolbar-search { flex-basis: 100%; max-inline-size: none; }
+  .ui-toolbar-filters { inline-size: 100%; }
+  .ui-toolbar-filters > .ui-dd { flex: 1; min-inline-size: 0; }
+  .ui-table-wrap--framed { border: 0; background: transparent; }
+  .ui-table tbody tr:not(.ui-table-empty-row) { margin-block-end: 12px; border-radius: 10px; background: var(--bg-card); }
+  .ui-table .btn-icon { min-inline-size: 40px; min-block-size: 40px; }
+  .ui-alert { flex-wrap: wrap; }
+  .ui-alert-text { min-inline-size: 0; }
+  .ui-alert > .btn { margin-inline-start: 28px; }
+  .sh-grid { grid-template-columns: 1fr; }
+  .sh-cat-label { margin-block-start: 0; }
+  .voice-analysis-status { flex-wrap: wrap; }
+  .voice-analysis-copy { flex-basis: calc(100% - 40px); }
+  .voice-analysis-status > .btn { margin-inline-start: 32px; }
+}
+
+/* A separate in-call keypad never edits or starts a new dialled number. */
+.softphone-incall-grid--answered { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.softphone-incall-grid--answered .softphone-incall-btn { min-inline-size: 0; padding-inline: 3px; }
+.softphone-incall-grid--answered .softphone-incall-btn span { font-size: 11px; line-height: 1.7; }
+.softphone-dtmf { inline-size: 100%; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-secondary); text-align: start; }
+.softphone-dtmf > label { display: block; font-size: 12px; font-weight: 600; margin-block-end: 5px; }
+.softphone-dtmf > input { text-align: center; letter-spacing: .15em; }
+.softphone-dtmf > p { margin-block: 6px 10px; color: var(--text-secondary); font-size: 11px; line-height: 1.8; }
+.softphone-dtmf .softphone-dialpad { margin: 0; gap: 5px; }
+.softphone-dtmf .softphone-dialpad-key { min-block-size: 44px; block-size: 48px; }
+
+.softphone-dtmf .softphone-dialpad-row { justify-content: center; }
+
+/* Calendar values remain ISO dates; Persian users edit and select civil Jalali days. */
+.ui-date-input { inline-size: 100%; min-inline-size: 0; }
+.ui-date-field { display: flex; align-items: stretch; gap: 5px; }
+.ui-date-field > input { flex: 1; min-inline-size: 0; inline-size: 100%; }
+.ui-date-calendar-toggle { display: inline-flex; align-items: center; justify-content: center; inline-size: 38px; min-inline-size: 38px; border: 1px solid var(--border); border-radius: 7px; color: var(--text-secondary); background: var(--bg-secondary); cursor: pointer; }
+.ui-date-calendar-toggle[aria-expanded="true"] { color: var(--accent-primary); border-color: var(--accent-primary); }
+.ui-date-error { display: block; margin-block-start: 5px; color: var(--accent-danger); font-size: 11px; line-height: 1.8; }
+.ui-date-calendar { inline-size: 100%; max-inline-size: 330px; padding: 10px; margin-block-start: 8px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-card); }
+.ui-date-calendar-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-block-end: 8px; }
+.ui-date-calendar-header strong { font-size: 13px; }
+.ui-date-calendar table { inline-size: 100%; table-layout: fixed; border-collapse: collapse; }
+.ui-date-calendar th { font-size: 11px; font-weight: 500; color: var(--text-secondary); block-size: 25px; text-align: center; }
+.ui-date-calendar td { padding: 1px; text-align: center; }
+.ui-date-calendar td button { inline-size: 100%; min-block-size: 32px; border: 1px solid transparent; border-radius: 6px; color: var(--text-primary); background: transparent; font: inherit; font-size: 12px; cursor: pointer; }
+.ui-date-calendar td button[aria-current="date"] { border-color: var(--accent-primary); }
+.ui-date-calendar td button:hover:not(:disabled) { background: var(--bg-tertiary); }
+.ui-date-calendar td button[aria-pressed="true"] { color: var(--bg-card); background: var(--accent-primary); border-color: var(--accent-primary); font-weight: 700; }
+.ui-date-calendar td button:disabled { opacity: .35; cursor: default; }
+.ui-date-calendar-footer { display: flex; justify-content: space-between; margin-block-start: 8px; border-block-start: 1px solid var(--border); padding-block-start: 8px; }
+.ui-range-custom:has(.ui-date-input) { min-inline-size: 260px; }
+.ui-range-custom:has(.ui-date-input) .ui-range-dates { display: flex; flex-direction: column; align-items: stretch; gap: 10px; }
+.ui-range-custom:has(.ui-date-input) .ui-range-arrow { display: none; }
+.ui-range-date-field { flex: 1; min-inline-size: 0; }
+.ui-range-date-field > label { display: block; margin-block-end: 4px; color: var(--text-secondary); font-size: 11px; }

@@ -27,6 +27,8 @@ export interface WebPhoneContextValue {
   makeCall: () => void;
   hangup: () => void;
   addDigit: (digit: string) => void;
+  /** Sends a single in-call tone without changing the next number to dial. */
+  sendDtmf: (digit: string) => void;
   clearNumber: () => void;
   backspace: () => void;
   clearLogs: () => void;

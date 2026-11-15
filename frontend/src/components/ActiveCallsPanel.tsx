@@ -23,6 +23,7 @@ export function ActiveCallsPanel({ calls, onSupervisorAction, onHangup, onTransf
     <Page
       icon={PhoneCall}
       title={t('nav.activeCalls')}
+      description={t('workspace.pages.calls')}
       count={callList.length}
       flush
       actions={onSync && (

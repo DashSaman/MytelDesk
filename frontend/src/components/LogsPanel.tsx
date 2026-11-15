@@ -1,3 +1,4 @@
+import { uiLocale, fmtTimestamp } from '../lib/format';
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import type React from 'react';
 import { useSearchParams } from 'react-router-dom';
@@ -296,6 +297,7 @@ function SystemLogsTab({
     <Page
       icon={ScrollText}
       title={t('nav.logs', 'Logs')}
+      description={t('workspace.pages.logs')}
       tabs={tabStrip}
       className="logs-page"
       actions={
@@ -410,7 +412,7 @@ function SystemLogsTab({
                   >
                     <ChevronRight size={14} className="logs-line-chevron" />
                     <span className="logs-line-ts">
-                      {new Date(e.ts * 1000).toLocaleTimeString(undefined, { hour12: false })}
+                      {new Date(e.ts * 1000).toLocaleTimeString(uiLocale(), { hour12: false })}
                     </span>
                     <span
                       className="logs-line-level u-fg-var"
@@ -600,7 +602,7 @@ function DeliveriesTab({ tabStrip }: { tabStrip: React.ReactNode }) {
   };
 
   const resend = async (row: WebhookDelivery) => {
-    const when = new Date(row.created_at).toLocaleString();
+    const when = fmtTimestamp(row.created_at);
     const ok = await confirm({
       title: t('logs.deliveries.resendTitle', 'Resend delivery #{{id}}?', { id: row.id }),
       // The stored text is two paragraphs split by a blank line; a <p> would run them together.
@@ -669,7 +671,7 @@ function DeliveriesTab({ tabStrip }: { tabStrip: React.ReactNode }) {
   const columns: Column<WebhookDelivery>[] = [
     {
       key: 'time', header: t('logs.deliveries.time', 'Time'), primary: true,
-      cell: (r) => <span className="u-text-sm u-nowrap">{new Date(r.created_at).toLocaleString()}</span>,
+      cell: (r) => <span className="u-text-sm u-nowrap">{fmtTimestamp(r.created_at)}</span>,
     },
     {
       key: 'direction', header: t('fields.direction', 'Direction'),
@@ -706,7 +708,7 @@ function DeliveriesTab({ tabStrip }: { tabStrip: React.ReactNode }) {
             </span>
             {st === 'pending' && r.next_attempt_at && (
               <span className="u-text-sm u-fg-muted u-nowrap">
-                {t('logs.deliveries.nextAttempt', 'Next try {{when}}', { when: new Date(r.next_attempt_at).toLocaleTimeString() })}
+                {t('logs.deliveries.nextAttempt', 'Next try {{when}}', { when: new Date(r.next_attempt_at).toLocaleTimeString(uiLocale(), { hour12: false }) })}
               </span>
             )}
             {!r.success && r.error && (
@@ -789,6 +791,7 @@ function DeliveriesTab({ tabStrip }: { tabStrip: React.ReactNode }) {
     <Page
       icon={ScrollText}
       title={t('nav.logs', 'Logs')}
+      description={t('workspace.pages.logs')}
       // Only this tab is time-scoped; the System tab's Page has no `scope`, so
       // the header does not offer a range that would do nothing there.
       scope={<PageRange value={dateRange} onChange={setDateRange} />}

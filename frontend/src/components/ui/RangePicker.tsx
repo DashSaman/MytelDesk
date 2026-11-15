@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { CalendarRange, Check, ChevronDown } from 'lucide-react';
 import { Popover } from './Popover';
+import { DateInput } from './DateInput';
 
 /**
  * The only date-range control. One trigger that reads the current range, opening
@@ -65,6 +66,9 @@ export function RangePicker({
   value, onChange, presets, label, customLabel, max, locale, className,
 }: RangePickerProps) {
   const [open, setOpen] = useState(false);
+  const [calendarRevision, setCalendarRevision] = useState(0);
+  const datesId = useId();
+  const persian = (locale || document.documentElement.lang).startsWith('fa');
 
   const selected = presets.find(p => p.from === value.from && p.to === value.to);
   const current = selected ? selected.label : formatRange(value.from, value.to, locale);
@@ -75,6 +79,8 @@ export function RangePicker({
       onOpenChange={setOpen}
       label={label}
       minWidth={232}
+      maxHeight={680}
+      deps={[calendarRevision]}
       // The trigger's home is a page header's trailing slot, so its panel is
       // always wider than it and always near the far edge. Lining the panel's
       // trailing edge up with the trigger's opens it back into the page.
@@ -115,34 +121,42 @@ export function RangePicker({
       <div className="ui-range-custom" role="group" aria-label={customLabel}>
         <span className="ui-range-custom-label">{customLabel}</span>
         <div className="ui-range-dates">
-          <input
-            type="date"
+          <div className="ui-range-date-field">
+          <label htmlFor={`${datesId}-from`}>{persian ? 'از تاریخ' : 'From'}</label>
+          <DateInput
+            id={`${datesId}-from`}
             className="ui-range-date"
+            locale={locale}
+            required
+            onCalendarToggle={() => setCalendarRevision(revision => revision + 1)}
             value={value.from}
             max={max}
-            aria-label={`${customLabel} — ${value.from}`}
-            onChange={e => {
-              const from = e.target.value;
+            onChange={from => {
               if (!from) return;
               // Keep the pair ordered: dragging `from` past `to` pushes `to`.
               onChange({ from, to: from > value.to ? from : value.to });
             }}
           />
+          </div>
           {/* An en dash, not an arrow: an arrow has to be flipped for RTL, and a
               range separator does not. */}
           <span className="ui-range-arrow" aria-hidden="true">–</span>
-          <input
-            type="date"
+          <div className="ui-range-date-field">
+          <label htmlFor={`${datesId}-to`}>{persian ? 'تا تاریخ' : 'To'}</label>
+          <DateInput
+            id={`${datesId}-to`}
             className="ui-range-date"
+            locale={locale}
+            required
+            onCalendarToggle={() => setCalendarRevision(revision => revision + 1)}
             value={value.to}
             max={max}
-            aria-label={`${customLabel} — ${value.to}`}
-            onChange={e => {
-              const to = e.target.value;
+            onChange={to => {
               if (!to) return;
               onChange({ from: to < value.from ? to : value.from, to });
             }}
           />
+          </div>
         </div>
       </div>
     </Popover>

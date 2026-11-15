@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { FileAudio, History, RefreshCw, Trash2 } from 'lucide-react';
 import {
   Alert, EmptyState, Loading, Page, Pagination, SearchInput, Table, Toolbar, useConfirm, type Column,
 } from './ui';
 import { api, messageOf } from '../lib/api';
-import { fmtBytes, fmtTimer } from '../lib/format';
+import { fmtBytes, fmtTimer, fmtTimestamp } from '../lib/format';
 import { PageRange } from './PageRange';
 import { AudioPlayer } from './CallLogPanel';
 import type { DateRange } from './analyticsUtils';
@@ -55,6 +55,7 @@ export function RecordingsPanel({ dateRange, onDateRangeChange, tabs }: Recordin
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const requestVersion = useRef(0);
   // `search` is already the settled term — ui/SearchInput owns the debounce.
   const [search, setSearch] = useState('');
   // A cursor encodes a position within ONE result set, so the stack of visited pages
@@ -71,6 +72,7 @@ export function RecordingsPanel({ dateRange, onDateRangeChange, tabs }: Recordin
   const pageIndex = stack.length - 1;
 
   const fetchPage = useCallback(async () => {
+    const version = ++requestVersion.current;
     setLoading(true);
     try {
       const params = new URLSearchParams({ limit: String(PAGE_SIZE) });
@@ -79,18 +81,22 @@ export function RecordingsPanel({ dateRange, onDateRangeChange, tabs }: Recordin
       params.set('date_from', dateRange.from);
       params.set('date_to', dateRange.to);
       const page = await api<RecordingsPage>(`/api/recordings?${params}`);
+      if (version !== requestVersion.current) return;
       setRows(page.recordings || []);
       setTotal(page.total ?? 0);
       setNextCursor(page.next_cursor ?? null);
       setError(null);
     } catch (e) {
-      setError(messageOf(e, t('recordings.loadFailed', 'Could not load the recordings.')));
+      if (version === requestVersion.current) setError(messageOf(e, t('recordings.loadFailed', 'Could not load the recordings.')));
     } finally {
-      setLoading(false);
+      if (version === requestVersion.current) setLoading(false);
     }
   }, [cursor, search, dateRange, t]);
 
-  useEffect(() => { fetchPage(); }, [fetchPage]);
+  useEffect(() => {
+    void fetchPage();
+    return () => { requestVersion.current++; };
+  }, [fetchPage]);
 
   const remove = async (row: RecordingRow) => {
     const ok = await confirm({
@@ -99,7 +105,7 @@ export function RecordingsPanel({ dateRange, onDateRangeChange, tabs }: Recordin
         defaultValue: 'The recording of the call from {{from}} to {{to}} on {{when}} is deleted from the server. The call stays in Call History. This cannot be undone.',
         from: row.src || '—',
         to: row.dst || '—',
-        when: new Date(row.calldate).toLocaleString(),
+        when: fmtTimestamp(row.calldate),
       }),
       confirmLabel: t('common.delete', 'Delete'),
       cancelLabel: t('common.cancel', 'Cancel'),
@@ -121,7 +127,7 @@ export function RecordingsPanel({ dateRange, onDateRangeChange, tabs }: Recordin
   const columns: Column<RecordingRow>[] = [
     {
       key: 'dateTime', header: t('callLog.table.dateTime'), primary: true,
-      cell: row => <span className="u-nowrap">{new Date(row.calldate).toLocaleString()}</span>,
+      cell: row => <span className="u-nowrap">{fmtTimestamp(row.calldate)}</span>,
     },
     { key: 'src', header: t('callLog.table.src'), cell: row => <span className="cl-phone">{row.src || '—'}</span> },
     { key: 'dst', header: t('callLog.table.dest'), cell: row => <span className="cl-phone">{row.dst || '—'}</span> },
@@ -162,6 +168,7 @@ export function RecordingsPanel({ dateRange, onDateRangeChange, tabs }: Recordin
     <Page
       icon={History}
       title={t('nav.callHistory')}
+      description={t('workspace.pages.recordings')}
       count={total}
       scope={<PageRange value={dateRange} onChange={onDateRangeChange} />}
       tabs={tabs}

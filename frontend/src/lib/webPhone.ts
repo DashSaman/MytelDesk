@@ -520,6 +520,7 @@ export class WebPhone {
   }
 
   sendDTMF(digit: string): void {
+    if (this.session?.state !== SessionState.Established || !/^[0-9*#]$/.test(digit)) return;
     const s = this.session?.sessionDescriptionHandler as { sendDtmf?: (d: string) => void };
     if (s?.sendDtmf) {
       try {

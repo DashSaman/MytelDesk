@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import type { DependencyList } from 'react';
 import type { TFunction } from 'i18next';
 import { fetchWithAuth } from '../auth';
@@ -225,10 +225,12 @@ export async function analyticsGet<T>(url: string): Promise<T> {
 export function useAnalyticsFetch<T>(
   fetcher: () => Promise<T>,
   deps: DependencyList,
-): { data: T | null; loading: boolean; error: string | null } {
+): { data: T | null; loading: boolean; error: string | null; retry: () => void } {
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [revision, setRevision] = useState(0);
+  const retry = useCallback(() => setRevision(value => value + 1), []);
 
   useEffect(() => {
     let cancelled = false;
@@ -240,7 +242,7 @@ export function useAnalyticsFetch<T>(
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps);
+  }, [...deps, revision]);
 
-  return { data, loading, error };
+  return { data, loading, error, retry };
 }

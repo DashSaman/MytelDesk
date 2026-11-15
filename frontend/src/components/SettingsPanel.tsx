@@ -156,12 +156,14 @@ export function SettingsPanel() {
   }, [isAdmin]);
 
   const loadQosStatus = useCallback(() => {
+    setQosMessage(null);
     api<{ enabled: boolean }>('/api/qos/status')
       .then(d => setQosEnabled(d.enabled))
       .catch(e => setQosMessage({ type: 'error', text: messageOf(e, t('settings.qos.statusError', 'Could not read QoS status.')) }));
   }, [t]);
 
   const loadSipTlsStatus = useCallback(() => {
+    setSipTlsMessage(null);
     api<{ enabled: boolean; domain?: string; udp_tcp_public?: boolean }>('/api/sip-tls/status')
       .then(d => { setSipTlsEnabled(d.enabled); setSipTlsDomain(d.domain || ''); setSipUdpTcpPublic(d.udp_tcp_public === true); })
       .catch(e => setSipTlsMessage({ type: 'error', text: messageOf(e, t('settings.sipTls.statusError', 'Could not read SIP TLS status.')) }));
@@ -350,6 +352,7 @@ export function SettingsPanel() {
       // The page stays "Settings"; the open section names itself in its Card
       // header. The way back is the "All settings" button in actions.
       title={t('header.settings', 'Settings')}
+      description={activeMeta ? t(activeMeta.descKey, activeMeta.descFallback) : t('workspace.pages.settings')}
       toolbar={!activeTab && (
         <Toolbar
           search={
@@ -373,11 +376,39 @@ export function SettingsPanel() {
         </button>
       )}
     >
+      <div className={activeTab ? 'settings-workspace' : 'settings-home-layout'}>
+      {activeTab && (
+        <>
+          <nav className="settings-section-nav" aria-label={t('workspace.settingsNav')}>
+            {CATEGORIES.map(category => {
+              const sections = SECTION_META.filter(s => s.cat === category.key && (!s.adminOnly || isAdmin) && (s.tab !== 'codecs' || !codecsUnsupported));
+              if (!sections.length) return null;
+              return <div key={category.key} className="settings-nav-group">
+                <div className="settings-nav-label">{t(category.labelKey, category.fallback)}</div>
+                {sections.map(({ tab, Icon, titleKey, titleFallback }) => (
+                  <button type="button" key={tab} aria-current={activeTab === tab ? 'page' : undefined} onClick={() => openTab(tab)}>
+                    <Icon size={16} aria-hidden /><span>{t(titleKey, titleFallback)}</span>
+                  </button>
+                ))}
+              </div>;
+            })}
+          </nav>
+          <label className="settings-section-select">
+            <span>{t('workspace.settingsSwitch')}</span>
+            <select className="form-input" value={activeTab} onChange={event => openTab(event.target.value as SettingsTab)}>
+              {SECTION_META.filter(s => (!s.adminOnly || isAdmin) && (s.tab !== 'codecs' || !codecsUnsupported)).map(s => (
+                <option key={s.tab} value={s.tab}>{t(s.titleKey, s.titleFallback)}</option>
+              ))}
+            </select>
+          </label>
+        </>
+      )}
+      <div className="settings-section-content">
       {/* ── Home: searchable grid of every section, grouped by category ── */}
       {!activeTab && (
         <div className="sh-home">
           {visibleSections.length === 0 ? (
-            <EmptyState icon={Search} title={t('settings.home.noMatches', 'No settings match your search.')} />
+            <EmptyState icon={Search} title={t('settings.home.noMatches', 'No settings match your search.')} action={<button type="button" className="btn" onClick={() => setHomeSearch('')}>{t('common.clear')}</button>} />
           ) : CATEGORIES.map(cat => {
             const inCat = visibleSections.filter(s => s.cat === cat.key);
             if (inCat.length === 0) return null;
@@ -436,7 +467,7 @@ export function SettingsPanel() {
             iconOff={<PowerOff size={14} />}
           />
           {qosLoading && busyLine}
-          <Alert tone={qosMessage?.type === 'success' ? 'success' : 'error'}>{qosMessage?.text}</Alert>
+          <Alert tone={qosMessage?.type === 'success' ? 'success' : 'error'} action={qosEnabled === null ? <button type="button" className="btn" onClick={loadQosStatus}>{t('common.retry')}</button> : undefined}>{qosMessage?.text}</Alert>
         </Card>
       )}
 
@@ -466,13 +497,13 @@ export function SettingsPanel() {
               <Toggle
                 checked={sipUdpTcpPublic}
                 onChange={setUdpTcpPublic}
-                disabled={sipUdpTcpSaving}
+                disabled={sipUdpTcpSaving || sipTlsEnabled === null}
                 label={t('settings.sipTls.udpTcpLabel', 'Offer UDP/TCP 5060 to apps')}
                 description={t('settings.sipTls.udpTcpDesc')}
               />
             </FormSection>
           )}
-          <Alert tone={sipTlsMessage?.type === 'success' ? 'success' : 'error'} className="u-mt-4">{sipTlsMessage?.text}</Alert>
+          <Alert tone={sipTlsMessage?.type === 'success' ? 'success' : 'error'} className="u-mt-4" action={sipTlsEnabled === null ? <button type="button" className="btn" onClick={loadSipTlsStatus}>{t('common.retry')}</button> : undefined}>{sipTlsMessage?.text}</Alert>
         </Card>
       )}
 
@@ -507,6 +538,8 @@ export function SettingsPanel() {
           <ContactCenterSettings isAdmin={isAdmin} />
         </>
       )}
+      </div>
+      </div>
     </Page>
   );
 }

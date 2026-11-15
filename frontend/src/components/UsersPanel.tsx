@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
-  Save, Users, UserPlus, Pencil, Trash2, Shield, Plus, Phone, Eye, EyeOff, Radio, QrCode, Smartphone, Wand2,
+  Save, Users, UserPlus, Pencil, Trash2, Shield, Plus, Phone, Eye, EyeOff, Radio, QrCode, Smartphone, Wand2, Loader2,
 } from 'lucide-react';
 import { MobileSetupQR } from './MobileSetupQR';
 import { generateSipPassword } from './ChangePasswordModal';
@@ -105,6 +105,9 @@ export function UsersPanel(props: UsersPanelProps = {}) {
   const [groups, setGroups] = useState<GroupOption[]>([]);
   const [agents, setAgents] = useState<AgentOption[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [editingUser, setEditingUser] = useState<OpDeskUser | null>(null);
   /** The add/edit form is a Modal over the list, which is always the page. */
@@ -169,6 +172,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
   // "User created/deleted" notice the instant it was set.
   const loadData = useCallback(async ({ keepMessage = false }: { keepMessage?: boolean } = {}) => {
     setLoading(true);
+    setLoadFailed(false);
     if (!keepMessage) setMessage(null);
     try {
       const [usersRes, groupsRes, agentsRes] = await Promise.all([
@@ -188,11 +192,13 @@ export function UsersPanel(props: UsersPanelProps = {}) {
         const d = await agentsRes.json();
         setAgents(d.agents || []);
       }
-      if (!usersRes.ok && usersRes.status === 403) {
-        setMessage({ type: 'error', text: t('users.adminRequired') });
+      if ([usersRes, groupsRes, agentsRes].some(response => !response.ok)) {
+        setLoadFailed(true);
+        setMessage({ type: 'error', text: t(usersRes.status === 403 ? 'users.adminRequired' : 'users.loadError') });
       }
     } catch (e) {
       console.error(e);
+      setLoadFailed(true);
       setMessage({ type: 'error', text: t('users.loadError') });
     } finally {
       setLoading(false);
@@ -211,12 +217,14 @@ export function UsersPanel(props: UsersPanelProps = {}) {
   }, []);
 
   const openCreate = () => {
+    if (loadFailed) return;
     resetForm();
     setMessage(null);
     setFormOpen(true);
   };
 
   const startEdit = (u: OpDeskUser) => {
+    if (loadFailed) return;
     setMessage(null);
     setEditingUser(u);
     setShowPassword(false);
@@ -243,6 +251,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
 
   const handleCreateOrUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (savingRef.current || loadFailed) return;
     setMessage(null);
     if (!form.username.trim()) {
       setMessage({ type: 'error', text: t('users.usernameRequired') });
@@ -256,6 +265,8 @@ export function UsersPanel(props: UsersPanelProps = {}) {
       setMessage({ type: 'error', text: t('users.sipPasswordRule', 'The SIP password needs 8 to 64 characters, with letters and digits, and no spaces or quotes.') });
       return;
     }
+    savingRef.current = true;
+    setSaving(true);
     try {
       let saved: string;
       if (editingUser) {
@@ -349,6 +360,9 @@ export function UsersPanel(props: UsersPanelProps = {}) {
           : { type: 'success', text: saved });
     } catch (err: unknown) {
       setMessage({ type: 'error', text: err instanceof Error ? err.message : t('common.requestFailed', 'Request failed') });
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
     }
   };
 
@@ -399,7 +413,8 @@ export function UsersPanel(props: UsersPanelProps = {}) {
 
   if (!isAdmin) {
     return (
-      <Page icon={Users} title={t('nav.teams', 'Teams')} tabs={tabs}>
+      <Page icon={Users} title={t('nav.teams', 'Teams')}
+      description={t('workspace.pages.users')} tabs={tabs}>
         <EmptyState icon={Shield} title={t('users.adminOnly')} />
       </Page>
     );
@@ -407,7 +422,8 @@ export function UsersPanel(props: UsersPanelProps = {}) {
 
   if (loading) {
     return (
-      <Page icon={Users} title={t('nav.teams', 'Teams')} tabs={tabs}>
+      <Page icon={Users} title={t('nav.teams', 'Teams')}
+      description={t('workspace.pages.users')} tabs={tabs}>
         <Loading label={t('users.loading')} />
       </Page>
     );
@@ -430,10 +446,11 @@ export function UsersPanel(props: UsersPanelProps = {}) {
     <Page
       icon={Users}
       title={t('nav.teams', 'Teams')}
+      description={t('workspace.pages.users')}
       tabs={tabs}
       count={users.length}
       actions={
-        <button type="button" className="btn btn-primary" onClick={openCreate}>
+        <button type="button" className="btn btn-primary" onClick={openCreate} disabled={loadFailed}>
           <Plus size={14} />
           {t('users.addUser')}
         </button>
@@ -461,14 +478,14 @@ export function UsersPanel(props: UsersPanelProps = {}) {
     >
       {/* Messages land on the list once the Modal is closed; while it is open
           they belong to the form and show at the top of its body. */}
-      {!formOpen && <Alert tone={message?.type === 'success' ? 'success' : 'error'}>{message?.text}</Alert>}
+      {!formOpen && <Alert tone={message?.type === 'success' ? 'success' : 'error'} action={loadFailed ? <button type="button" className="btn" onClick={() => void loadData()}>{t('common.retry')}</button> : undefined}>{message?.text}</Alert>}
 
       <Table
         framed
         caption={t('users.title')}
         rows={filtered}
         rowKey={u => u.id}
-        empty={users.length === 0
+        empty={loadFailed ? undefined : users.length === 0
           ? <EmptyState icon={Users} title={t('users.noUsers')} />
           : <EmptyState icon={Users} title={t('users.noMatches', 'No users match "{{query}}"', { query: search })} />}
         columns={[
@@ -538,6 +555,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
                   type="button"
                   className="btn btn-ghost btn-sm btn-icon"
                   onClick={() => startEdit(u)}
+                  disabled={loadFailed}
                   title={t('users.editUser')}
                   aria-label={t('users.editUser')}
                 >
@@ -571,9 +589,9 @@ export function UsersPanel(props: UsersPanelProps = {}) {
             <button type="button" className="btn" onClick={resetForm}>
               {t('common.cancel')}
             </button>
-            <button type="submit" form="user-form" className="btn btn-primary">
-              <Save size={14} />
-              {editingUser ? t('users.updateUser') : t('users.addUser')}
+            <button type="submit" form="user-form" className="btn btn-primary" disabled={saving || loadFailed} aria-busy={saving}>
+              {saving ? <Loader2 size={14} className="spinner" /> : <Save size={14} />}
+              {saving ? t('common.saving') : editingUser ? t('users.updateUser') : t('users.addUser')}
             </button>
           </>
         }

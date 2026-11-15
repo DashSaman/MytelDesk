@@ -35,7 +35,8 @@ export function ProfilePanel() {
   ];
 
   return (
-    <Page icon={UserCircle} title={t('profile.title', 'My Profile')}>
+    <Page icon={UserCircle} title={t('profile.title', 'My Profile')}
+      description={t('workspace.pages.profile')}>
       <div className="acct-profile-grid">
         <div className="acct-profile-col">
           <Card icon={User} title={t('common.account', 'Account')} description={t('profile.accountDesc', 'Your sign-in details.')}>

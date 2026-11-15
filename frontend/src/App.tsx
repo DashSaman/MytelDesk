@@ -1,3 +1,4 @@
+import { uiLocale } from './lib/format';
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
@@ -90,7 +91,7 @@ function formatNotifTime(iso: string, t: (key: string, opts?: Record<string, unk
   if (sec < 3600) return t('time.minutesAgo', { count: Math.floor(sec / 60) });
   if (sec < 86400) return t('time.hoursAgo', { count: Math.floor(sec / 3600) });
   if (sec < 172800) return t('common.yesterday');
-  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return d.toLocaleDateString(uiLocale(), { month: 'short', day: 'numeric' });
 }
 
 /** A notification's reason in words. A missed-call notification's reason is a call status
@@ -594,7 +595,7 @@ function App({ onLogout }: AppProps) {
     }
     // Admin-only tabs. Without this a supervisor navigating to /logs gets a blank
     // <main> rather than being sent somewhere useful.
-    if (userRole !== 'admin' && ['logs', 'groups', 'users'].includes(activeTab)) {
+    if (userRole !== 'admin' && ['logs', 'groups', 'users', 'recordings'].includes(activeTab)) {
       navigate(`/${DEFAULT_TAB}`, { replace: true });
     }
   }, [userRole, activeTab, navigate]);
@@ -738,7 +739,7 @@ function App({ onLogout }: AppProps) {
                  alt="MyTel" style={{ width: 22, height: 22 }} />
           </a>
           <div>
-            <h1 className="header-title">{t('app.title')}</h1>
+            <h1 className="header-title"><span className="header-title-full">{t('app.title')}</span><span className="header-title-compact">{t('workspace.shortName')}</span></h1>
             <p className="header-subtitle">{t('app.subtitle')}</p>
           </div>
         </div>

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import {
   Phone,
@@ -19,6 +19,7 @@ import {
   SignalMedium,
   SignalLow,
   SignalZero,
+  Keyboard,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -80,6 +81,7 @@ export function Softphone() {
     makeCall,
     hangup,
     addDigit,
+    sendDtmf,
     backspace,
     clearLogs,
     refetchConfig,
@@ -99,7 +101,40 @@ export function Softphone() {
   const [showLog, setShowLog] = useState(false);
   const [showTransfer, setShowTransfer] = useState(false);
   const [transferDest, setTransferDest] = useState('');
+  const [showKeypad, setShowKeypad] = useState(false);
+  const [sentDigits, setSentDigits] = useState('');
+  const keypadToggle = useRef<HTMLButtonElement>(null);
+  const keypadInput = useRef<HTMLInputElement>(null);
   const { micLevel, speakerLevel } = useAudioLevels(localStream, remoteStream);
+
+  useEffect(() => {
+    if (!isCallAnswered) {
+      setShowKeypad(false);
+      setSentDigits('');
+    }
+  }, [isCallAnswered]);
+
+  useEffect(() => {
+    if (showKeypad) keypadInput.current?.focus({ preventScroll: true });
+  }, [showKeypad]);
+
+  const sendTone = (digit: string) => {
+    if (!isCallAnswered || !/^[0-9*#]$/.test(digit)) return;
+    sendDtmf(digit);
+    setSentDigits(previous => (previous + digit).slice(-32));
+  };
+
+  const handleToneKey = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      setShowKeypad(false);
+      keypadToggle.current?.focus();
+    } else if (!event.ctrlKey && !event.metaKey && !event.altKey && /^[0-9*#]$/.test(event.key)) {
+      event.preventDefault();
+      if (!event.repeat) sendTone(event.key);
+    }
+  };
 
   // The last call's status, shown for a moment after hangup. Keyed on the outcome's seq,
   // so a second identical outcome (two Busy calls in a row) shows again.
@@ -273,12 +308,13 @@ export function Softphone() {
               </div>
             </div>
           </div>
-          <div className="softphone-incall-grid">
+          <div className={`softphone-incall-grid${isCallAnswered ? ' softphone-incall-grid--answered' : ''}`}>
             <button
               type="button"
               className={`softphone-incall-btn ${isOnHold ? 'softphone-incall-btn-active' : ''}`}
               title={isOnHold ? t('common.resume') : t('softphone.hold')}
               onClick={toggleHold}
+              aria-pressed={isOnHold}
             >
               <Pause size={22} />
               <span>{isOnHold ? t('common.resume') : t('softphone.hold')}</span>
@@ -287,6 +323,7 @@ export function Softphone() {
               type="button"
               className={`softphone-incall-btn ${isMuted ? 'softphone-incall-btn-active' : ''}`}
               onClick={toggleMute}
+              aria-pressed={isMuted}
               title={isMuted ? t('softphone.unmute') : t('softphone.mute')}
             >
               {isMuted ? <Mic size={22} /> : <MicOff size={22} />}
@@ -302,7 +339,39 @@ export function Softphone() {
               <ArrowRightLeft size={22} />
               <span>{t('common.transfer')}</span>
             </button>
+            {isCallAnswered && (
+              <button
+                ref={keypadToggle}
+                type="button"
+                className={`softphone-incall-btn ${showKeypad ? 'softphone-incall-btn-active' : ''}`}
+                onClick={() => setShowKeypad(value => !value)}
+                aria-expanded={showKeypad}
+                aria-controls={showKeypad ? 'softphone-dtmf' : undefined}
+              >
+                <Keyboard size={22} />
+                <span>{t('workspace.keypad')}</span>
+              </button>
+            )}
           </div>
+          {isCallAnswered && showKeypad && (
+            <div id="softphone-dtmf" className="softphone-dtmf" role="group" aria-label={t('workspace.inCallKeypad')} onKeyDown={handleToneKey}>
+              <label htmlFor="softphone-dtmf-digits">{t('workspace.digitsSent')}</label>
+              <input ref={keypadInput} id="softphone-dtmf-digits" className="form-input" value={sentDigits} readOnly inputMode="numeric" dir="ltr" aria-describedby="softphone-dtmf-hint" />
+              <p id="softphone-dtmf-hint">{t('workspace.keypadHint')}</p>
+              <div className="softphone-dialpad" dir="ltr">
+                {DIAL_PAD.map((row, rowIndex) => (
+                  <div key={rowIndex} className="softphone-dialpad-row">
+                    {row.map(([digit, letters]) => (
+                      <button key={digit} type="button" className="softphone-dialpad-key" aria-label={digit} onClick={() => sendTone(digit)}>
+                        <span className="softphone-dialpad-digit">{digit}</span>
+                        {letters && <span className="softphone-dialpad-letters" aria-hidden="true">{letters}</span>}
+                      </button>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           {/* Transfer panel: pick a destination, then hand the call over (blind
               transfer via SIP REFER — the only transfer OpDesk's web phone does). */}
           {showTransfer && (

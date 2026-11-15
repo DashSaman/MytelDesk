@@ -1,3 +1,4 @@
+import { fmtTimestamp } from '../lib/format';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Loader2, Save, Trash2, RefreshCw, KeyRound, ExternalLink, Timer, Smartphone, Undo2,
@@ -261,7 +262,7 @@ export function MobileWakePanel({ card, onLoaded }: MobileWakePanelProps) {
     { key: 'app', header: t('mobileWake.devices.app', 'App'), cell: b => b.user_agent || '—' },
     {
       key: 'seen', header: t('mobileWake.devices.lastSeen', 'Last seen'),
-      cell: b => (b.last_seen_at ? new Date(b.last_seen_at).toLocaleString() : '—'),
+      cell: b => (b.last_seen_at ? fmtTimestamp(b.last_seen_at) : '—'),
     },
     {
       key: 'forget', header: '', label: t('mobileWake.devices.forget', 'Forget this device'), align: 'end',

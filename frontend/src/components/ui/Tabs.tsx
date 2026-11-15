@@ -41,24 +41,36 @@ interface TabsProps {
 export function Tabs({ tabs, active, onChange, ariaLabel, className }: TabsProps) {
   const listRef = useRef<HTMLDivElement>(null);
   const activeRef = useRef<HTMLButtonElement>(null);
+  const reveal = (button: HTMLButtonElement | null) => {
+    const list = listRef.current;
+    if (!list || !button) return;
+    const bounds = list.getBoundingClientRect();
+    const item = button.getBoundingClientRect();
+    // Scroll only this strip. scrollIntoView also moved the app's clipped
+    // ancestors, which could push the sidebar and form header out of view.
+    if (item.left < bounds.left) list.scrollLeft += item.left - bounds.left;
+    else if (item.right > bounds.right) list.scrollLeft += item.right - bounds.right;
+  };
 
   // Keep the selected tab visible: a tab restored from ?tab= can start outside the
   // scroll window, and a tab that cannot be seen reads as no tab being selected.
   useEffect(() => {
-    activeRef.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    reveal(activeRef.current);
   }, [active]);
 
   const move = (from: number, delta: number) => {
     const buttons = listRef.current?.querySelectorAll<HTMLButtonElement>('[role="tab"]');
     if (!buttons?.length) return;
     const next = (from + delta + buttons.length) % buttons.length;
-    buttons[next].focus();
+    buttons[next].focus({ preventScroll: true });
+    reveal(buttons[next]);
   };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
+    const forward = listRef.current && getComputedStyle(listRef.current).direction === 'rtl' ? -1 : 1;
     switch (e.key) {
-      case 'ArrowRight': e.preventDefault(); move(index, 1); break;
-      case 'ArrowLeft': e.preventDefault(); move(index, -1); break;
+      case 'ArrowRight': e.preventDefault(); move(index, forward); break;
+      case 'ArrowLeft': e.preventDefault(); move(index, -forward); break;
       case 'Home': e.preventDefault(); move(0, 0); break;
       case 'End': e.preventDefault(); move(tabs.length - 1, 0); break;
       default: break;

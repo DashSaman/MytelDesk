@@ -91,7 +91,7 @@ export function AnalyticsQueues({ dateRange }: Props) {
   const [compareBy, setCompareBy] = useState<CompareKey>('sla');
   const [detailQueue, setDetailQueue] = useState<string>(ALL);
 
-  const { data, loading, error } = useAnalyticsFetch(
+  const { data, loading, error, retry } = useAnalyticsFetch(
     async () => {
       const params = buildDateParams(dateRange.from, dateRange.to);
       const r = await analyticsGet<{ queues: QueueKPIRow[]; short_abandon_secs?: number }>(
@@ -147,7 +147,7 @@ export function AnalyticsQueues({ dateRange }: Props) {
     return <div className="an-loading"><div className="an-spinner" />{t('analytics.loading')}</div>;
   }
   if (error) {
-    return <Alert>{t('analytics.error')}</Alert>;
+    return <Alert action={<button type="button" className="btn" onClick={retry}>{t('common.retry')}</button>}>{t('analytics.error')}</Alert>;
   }
   if (queues.length === 0) {
     return <EmptyState icon={ListOrdered} title={t('analytics.empty', 'No data for this period')} />;
@@ -373,7 +373,7 @@ export function AnalyticsQueues({ dateRange }: Props) {
             {heat.loading ? (
               <div className="an-loading"><div className="an-spinner" />{t('analytics.loading')}</div>
             ) : heat.error || !heat.data ? (
-              <Alert>{t('analytics.error')}</Alert>
+              <Alert action={<button type="button" className="btn" onClick={heat.retry}>{t('common.retry')}</button>}>{t('analytics.error')}</Alert>
             ) : (
               <Heatmap data={heat.data} />
             )}

@@ -282,6 +282,7 @@ export function QueuesPanel({ queues, members, entries, extensions, agentStates,
     <Page
       icon={Users}
       title={t('nav.queues')}
+      description={t('workspace.pages.queues')}
       count={queueList.length}
       actions={onSync && (
         <button type="button" className="btn btn-ghost" onClick={onSync} title={t('common.syncAll')}>

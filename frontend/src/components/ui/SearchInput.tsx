@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, useId } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useSearchParams } from 'react-router-dom';
 import { Loader2, Search, X } from 'lucide-react';
 import type React from 'react';
@@ -51,6 +52,7 @@ export function SearchInput({
   value, onChange, label, placeholder, loading,
   urlSync = true, debounceMs = 250, className,
 }: SearchInputProps) {
+  const { t } = useTranslation();
   const inputRef = useRef<HTMLInputElement>(null);
   const [draft, setDraft] = useState(value);
 
@@ -131,7 +133,7 @@ export function SearchInput({
     }
   };
 
-  const id = `search-${label.replace(/\s+/g, '-').toLowerCase()}`;
+  const id = useId();
 
   return (
     <div className={`ui-search${className ? ` ${className}` : ''}`}>
@@ -149,7 +151,7 @@ export function SearchInput({
       />
       {loading && <Loader2 size={14} className="ui-search-spinner spinner" aria-hidden="true" />}
       {!loading && draft && (
-        <button type="button" className="ui-search-clear" onClick={clear} aria-label={`Clear ${label}`}>
+        <button type="button" className="ui-search-clear" onClick={clear} aria-label={t('workspace.clearSearch', { label, defaultValue: 'Clear {{label}}' })}>
           <X size={14} />
         </button>
       )}

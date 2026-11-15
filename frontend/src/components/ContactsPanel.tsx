@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  BookUser, Plus, Pencil, Trash2, Save, Loader2, PhoneCall,
+  BookUser, Plus, Pencil, Trash2, Save, Loader2, PhoneCall, RefreshCw,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { fetchWithAuth, getUser } from '../auth';
@@ -33,6 +33,8 @@ export function ContactsPanel({ onDial }: ContactsPanelProps) {
   const { canConnect } = useWebPhoneContext();
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const requestVersion = useRef(0);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   // The add/edit form is a modal over the list; the list is the only view.
   const [formOpen, setFormOpen] = useState(false);
@@ -41,36 +43,44 @@ export function ContactsPanel({ onDial }: ContactsPanelProps) {
   const [search, setSearch] = useState('');
   // Cursor pagination: `stack` holds the cursor of each visited page so Previous can
   // go back; stack[0] is the first page.
-  const [stack, setStack] = useState<(string | null)[]>([null]);
+  const filterKey = search.trim();
+  const [pagesAt, setPagesAt] = useState<{ key: string; stack: (string | null)[] }>({ key: filterKey, stack: [null] });
+  const stack = pagesAt.key === filterKey ? pagesAt.stack : [null];
+  const cursor = stack[stack.length - 1];
+  const setStack = (next: (string | null)[]) => setPagesAt({ key: filterKey, stack: next });
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
 
   const loadContacts = useCallback(async () => {
+    const version = ++requestVersion.current;
     setLoading(true);
+    setLoadError(null);
     try {
       const params = new URLSearchParams({ limit: String(PAGE_SIZE) });
-      const cur = stack[stack.length - 1];
-      if (cur) params.set('cursor', cur);
+      if (cursor) params.set('cursor', cursor);
       if (search.trim()) params.set('search', search.trim());
       const res = await fetchWithAuth(`/api/contacts?${params}`);
+      if (version !== requestVersion.current) return;
       if (res.ok) {
         const d = await res.json();
+        if (version !== requestVersion.current) return;
         setContacts(d.contacts || []);
         setNextCursor(d.next_cursor || null);
       } else {
-        setMessage({ type: 'error', text: t('contacts.loadError') });
+        setLoadError(t('contacts.loadError'));
       }
     } catch {
-      setMessage({ type: 'error', text: t('contacts.loadError') });
+      if (version === requestVersion.current) setLoadError(t('contacts.loadError'));
     } finally {
-      setLoading(false);
+      if (version === requestVersion.current) setLoading(false);
     }
-  }, [t, stack, search]);
+  }, [t, cursor, search]);
 
-  useEffect(() => { loadContacts(); }, [loadContacts]);
-  // A new search invalidates every cursor: they point into the old result set.
-  useEffect(() => { setStack([null]); }, [search]);
+  useEffect(() => {
+    void loadContacts();
+    return () => { requestVersion.current++; };
+  }, [loadContacts]);
 
   const resetForm = useCallback(() => {
     setEditing(null);
@@ -156,6 +166,7 @@ export function ContactsPanel({ onDial }: ContactsPanelProps) {
     <Page
       icon={BookUser}
       title={t('nav.contacts')}
+      description={t('workspace.pages.contacts')}
       actions={isAdmin ? (
         <button type="button" className="btn btn-primary" onClick={openCreate}>
           <Plus size={14} />
@@ -171,6 +182,7 @@ export function ContactsPanel({ onDial }: ContactsPanelProps) {
               label={t('contacts.searchLabel', 'Search contacts')}
               placeholder={t('contacts.searchPlaceholder')}
               urlSync={false}
+              loading={loading}
             />
           }
         />
@@ -186,9 +198,10 @@ export function ContactsPanel({ onDial }: ContactsPanelProps) {
         </Alert>
       )}
 
-      {loading && contacts.length === 0 ? (
+      {loadError && <Alert action={<button type="button" className="btn" onClick={() => void loadContacts()}><RefreshCw size={14} />{t('common.retry')}</button>}>{loadError}</Alert>}
+      {loading ? (
         <Loading label={t('contacts.loading')} />
-      ) : (
+      ) : loadError ? null : (
         <Table
           framed
           caption={t('nav.contacts')}
@@ -199,12 +212,14 @@ export function ContactsPanel({ onDial }: ContactsPanelProps) {
               icon={BookUser}
               title={t('contacts.noMatchesTitle', 'No matching contacts')}
               description={t('contacts.noMatches')}
+              action={<button type="button" className="btn" onClick={() => setSearch('')}>{t('common.clear')}</button>}
             />
           ) : (
             <EmptyState
               icon={BookUser}
               title={t('contacts.emptyTitle', 'No contacts yet')}
               description={t('contacts.noContacts')}
+              action={isAdmin && <button type="button" className="btn btn-primary" onClick={openCreate}><Plus size={14} />{t('contacts.addContact')}</button>}
             />
           )}
           columns={[
@@ -278,14 +293,14 @@ export function ContactsPanel({ onDial }: ContactsPanelProps) {
         />
       )}
 
-      {(stack.length > 1 || nextCursor) && (
+      {!loading && !loadError && (stack.length > 1 || nextCursor) && (
         <div className="u-mt-3">
           <Pagination
             mode="cursor"
             hasPrev={stack.length > 1}
             hasNext={!!nextCursor}
-            onPrev={() => setStack(st => st.slice(0, -1))}
-            onNext={() => setStack(st => [...st, nextCursor])}
+            onPrev={() => setStack(stack.slice(0, -1))}
+            onNext={() => setStack([...stack, nextCursor])}
             info={t('contacts.showingCount', 'Showing {{count}}', { count: contacts.length })}
           />
         </div>

@@ -19,7 +19,7 @@ import { downloadWithAuth } from '../lib/download';
 import { messageOf } from '../lib/api';
 import { PageRange } from './PageRange';
 import type { DateRange } from './analyticsUtils';
-import { fmtTimer } from '../lib/format';
+import { fmtTimer, uiLocale } from '../lib/format';
 import { StatCard, StatRow } from './FigureCards';
 import { CallStatusBadge } from './CallStatusBadge';
 import { CALL_STATUS_ORDER, callStatusColor, callStatusLabel } from './callStatus';
@@ -40,7 +40,7 @@ export function formatDuration(seconds: number): string {
 function formatEventTime(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleTimeString(undefined, {
+  return d.toLocaleTimeString(uiLocale(), {
     hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
   });
 }
@@ -71,10 +71,10 @@ function formatCallDate(dateStr: string, t: TFunction): { date: string; time: st
   } else if (callDay.getTime() === yesterday.getTime()) {
     dateLabel = t('common.yesterday');
   } else {
-    dateLabel = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    dateLabel = d.toLocaleDateString(uiLocale(), { month: 'short', day: 'numeric' });
   }
 
-  const timeLabel = d.toLocaleTimeString(undefined, {
+  const timeLabel = d.toLocaleTimeString(uiLocale(), {
     hour: '2-digit', minute: '2-digit', hour12: false
   });
 
@@ -1168,6 +1168,7 @@ export function CallLogPanel({ dateRange, onDateRangeChange, tabs }: CallLogPane
     <Page
       icon={History}
       title={t('nav.callHistory')}
+      description={t('workspace.pages.call-log')}
       count={totalCount}
       scope={<PageRange value={dateRange} onChange={onDateRangeChange} />}
       tabs={tabs}

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { BarChart3, LayoutDashboard, Users, ListFilter, Layers, UserCheck } from 'lucide-react';
 import { Page, Tabs } from './ui';
@@ -21,7 +21,16 @@ interface AnalyticsPanelProps {
 
 export function AnalyticsPanel({ dateRange, onDateRangeChange }: AnalyticsPanelProps) {
   const { t } = useTranslation();
-  const [tab, setTab] = useState<AnalyticsTab>('overview');
+  const [params, setParams] = useSearchParams();
+  const requested = params.get('tab');
+  const tab: AnalyticsTab = ['overview', 'queues', 'agents', 'adherence', 'drilldown'].includes(requested || '')
+    ? requested as AnalyticsTab : 'overview';
+  const setTab = (next: AnalyticsTab) => setParams(previous => {
+    const updated = new URLSearchParams(previous);
+    updated.set('tab', next);
+    updated.delete('q');
+    return updated;
+  });
 
   const tabs = [
     { key: 'overview',  label: t('analytics.nav.overview'),  icon: <LayoutDashboard size={14} /> },
@@ -35,6 +44,7 @@ export function AnalyticsPanel({ dateRange, onDateRangeChange }: AnalyticsPanelP
     <Page
       icon={BarChart3}
       title={t('nav.analytics')}
+      description={t('workspace.pages.analytics')}
       className="an-panel"
       bodyClassName="an-tab-content"
       // The range is scope, not a filter: it is the question this page answers,

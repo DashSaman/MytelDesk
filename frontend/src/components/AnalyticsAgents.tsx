@@ -85,7 +85,7 @@ export function AnalyticsAgents({ dateRange }: Props) {
   const [sortDir, setSortDir] = useState<SortDir>('asc');
   const [compareBy, setCompareBy] = useState<CompareKey>('answered');
   const [callsFor, setCallsFor] = useState<AgentRow | null>(null);
-  const { data, loading, error } = useAnalyticsFetch(
+  const { data, loading, error, retry } = useAnalyticsFetch(
     () => {
       const params = buildDateParams(dateRange.from, dateRange.to);
       return analyticsGet<{ agents: AgentRow[] }>(`/api/analytics/agent-performance?${params}`);
@@ -112,7 +112,7 @@ export function AnalyticsAgents({ dateRange }: Props) {
     return <div className="an-loading"><div className="an-spinner" />{t('analytics.loading')}</div>;
   }
   if (error) {
-    return <Alert>{t('analytics.error')}</Alert>;
+    return <Alert action={<button type="button" className="btn" onClick={retry}>{t('common.retry')}</button>}>{t('analytics.error')}</Alert>;
   }
 
   const sorted = sortRows(agents, sortKey, sortDir);

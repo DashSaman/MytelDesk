@@ -1,3 +1,4 @@
+import { uiLocale } from '../lib/format';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type React from 'react';
 import { useTranslation } from 'react-i18next';
@@ -49,7 +50,7 @@ function detailText(detail: unknown): string {
 function fmtTime(s?: string | null): string {
   if (!s) return '—';
   const d = new Date(s);
-  return isNaN(d.getTime()) ? s : d.toLocaleString();
+  return isNaN(d.getTime()) ? s : d.toLocaleString(uiLocale(), { hour12: false });
 }
 
 export function AuditPanel({ tabStrip }: { tabStrip: React.ReactNode }) {
@@ -196,6 +197,7 @@ export function AuditPanel({ tabStrip }: { tabStrip: React.ReactNode }) {
     <Page
       icon={ScrollText}
       title={t('nav.logs', 'Logs')}
+      description={t('workspace.pages.logs')}
       scope={<PageRange value={range} onChange={setRange} />}
       tabs={tabStrip}
       flush

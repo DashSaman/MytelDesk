@@ -1,3 +1,4 @@
+import { fmtTimestamp } from '../lib/format';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Loader2, KeyRound, Plus, Trash2, Copy, Check, Power, Pencil, RefreshCw, Save,
@@ -9,6 +10,7 @@ import { Modal, Alert, Badge, Card, EmptyState, FormField, FormRow, Loading, Tab
 import type { SectionCard } from './SettingsPanel';
 import type { ApiKey } from '../types';
 import { raiseFor, toApiError } from '../lib/api';
+import { DateInput } from './ui/DateInput';
 
 interface ApiKeyCreated extends ApiKey { key: string; }
 
@@ -171,7 +173,7 @@ function isoToDateInput(iso: string | null | undefined): string {
 }
 
 function isEnabled(k: ApiKey): boolean { return k.enabled === true || k.enabled === 1; }
-const fmtDate = (s: string | null | undefined) => (s ? new Date(s).toLocaleString() : '—');
+const fmtDate = (s: string | null | undefined) => (s ? fmtTimestamp(s) : '—');
 
 export interface ApiKeysPanelProps {
   /** The section's Card header, from Settings. */
@@ -198,6 +200,7 @@ export function ApiKeysPanel({ card, onCountChange }: ApiKeysPanelProps) {
   const [editing, setEditing] = useState<ApiKey | null>(null);
   const [form, setForm] = useState<FormState>(blank);
   const [saving, setSaving] = useState(false);
+  const [expiryValid, setExpiryValid] = useState(true);
   const [createdKey, setCreatedKey] = useState<ApiKeyCreated | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -222,8 +225,9 @@ export function ApiKeysPanel({ card, onCountChange }: ApiKeysPanelProps) {
   }, []);
   useEffect(() => { load(); }, [load]);
 
-  function openCreate() { setMessage(null); setEditing(null); setForm(blank); setModalOpen(true); }
+  function openCreate() { setMessage(null); setEditing(null); setForm(blank); setExpiryValid(true); setModalOpen(true); }
   function openEdit(k: ApiKey) {
+    setExpiryValid(true);
     setMessage(null);
     setEditing(k);
     setForm({ name: k.name, scopes: k.scopes || [], expires_at: isoToDateInput(k.expires_at) });
@@ -233,6 +237,7 @@ export function ApiKeysPanel({ card, onCountChange }: ApiKeysPanelProps) {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!expiryValid || saving) return;
     if (!form.name.trim()) { setMessage({ type: 'error', text: t('settings.apiKeys.nameRequired', 'Name is required') }); return; }
     if (form.scopes.length === 0) { setMessage({ type: 'error', text: t('settings.apiKeys.scopeRequired', 'Select at least one scope') }); return; }
     setSaving(true);
@@ -392,7 +397,7 @@ export function ApiKeysPanel({ card, onCountChange }: ApiKeysPanelProps) {
         footer={
           <>
             <button type="button" className="btn" onClick={closeModal}>{t('common.cancel', 'Cancel')}</button>
-            <button type="button" className="btn btn-primary" disabled={saving} onClick={handleSubmit}>
+            <button type="button" className="btn btn-primary" disabled={saving || !expiryValid} onClick={handleSubmit}>
               {saving ? <Loader2 size={14} className="spinner" /> : editing ? <Save size={14} /> : <Plus size={14} />}
               {editing ? t('common.saveChanges', 'Save changes') : t('settings.apiKeys.add', 'Add key')}
             </button>
@@ -408,8 +413,8 @@ export function ApiKeysPanel({ card, onCountChange }: ApiKeysPanelProps) {
                 placeholder={t('settings.apiKeys.namePlaceholder', 'e.g. Reporting integration')} />
             </FormField>
             <FormField label={t('settings.apiKeys.expires', 'Expires')} htmlFor="ak-expires" hint={t('settings.apiKeys.expiresHint', 'Leave blank to never expire.')}>
-              <input id="ak-expires" className="form-input" type="date" value={form.expires_at}
-                onChange={e => setForm(f => ({ ...f, expires_at: e.target.value }))} />
+              <DateInput id="ak-expires" className="form-input" value={form.expires_at} onValidityChange={setExpiryValid}
+                onChange={expires_at => setForm(f => ({ ...f, expires_at }))} />
             </FormField>
           </FormRow>
           <FormField label={t('settings.apiKeys.scopes', 'Scopes')}>

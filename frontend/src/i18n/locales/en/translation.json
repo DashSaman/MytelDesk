@@ -1833,5 +1833,37 @@
       "login": "Sign in",
       "logout": "Sign out"
     }
+  },
+  "workspace": {
+    "keypad": "Keypad",
+    "inCallKeypad": "In-call keypad",
+    "digitsSent": "Digits sent",
+    "keypadHint": "Use the keys or type 0–9, * and # for this call.",
+    "shortName": "MyTel Desk",
+    "clearSearch": "Clear {{label}}",
+    "settingsLoadFailed": "Settings could not be loaded. Reload them before making changes.",
+    "settingsNav": "Settings sections",
+    "settingsSwitch": "Go to section",
+    "vadTitle": "Voice activity analysis",
+    "vadReady": "Ready to analyse",
+    "vadUnavailable": "Unavailable",
+    "vadChecking": "Checking the analysis engine…",
+    "vadDescription": "Review each speaker’s talk time and silence in recorded calls.",
+    "vadUnavailableHint": "Audio analysis is not ready. Calls and recording continue with their current settings. Try checking again.",
+    "pages": {
+      "dashboard": "Live contact centre status and today’s performance",
+      "extensions": "Extension availability and call controls",
+      "calls": "Calls in progress, supervision and transfers",
+      "queues": "Queues, waiting callers and agent availability",
+      "call-log": "Find calls, review their journey and outcome",
+      "contacts": "Shared phonebook and customer contact details",
+      "users": "Team accounts, roles and access",
+      "groups": "Organise members, extensions and permitted queues",
+      "analytics": "Service performance for the selected period",
+      "recordings": "Recorded calls, playback and retention",
+      "logs": "System events, CRM deliveries and change history",
+      "settings": "Telephony, recording and connected services",
+      "profile": "Your account, interface language and preferences"
+    }
   }
 }

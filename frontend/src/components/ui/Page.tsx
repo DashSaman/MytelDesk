@@ -25,6 +25,8 @@ import type { LucideIcon } from 'lucide-react';
 export interface PageProps {
   icon: LucideIcon;
   title: React.ReactNode;
+  /** A short description of this page's job, beneath its identity. */
+  description?: React.ReactNode;
   /** A total shown beside the title, e.g. the number of live calls. */
   count?: number;
   /** The date range or other "what is this page about" control. */
@@ -43,16 +45,20 @@ export interface PageProps {
 }
 
 export function Page({
-  icon: Icon, title, count, scope, actions, tabs, toolbar, flush, className, bodyClassName, children,
+  icon: Icon, title, description, count, scope, actions, tabs, toolbar, flush, className, bodyClassName, children,
 }: PageProps) {
+  const activeTab = React.isValidElement<{ active?: string }>(tabs) ? tabs.props.active : undefined;
   return (
     <section className={`panel ui-page${className ? ` ${className}` : ''}`}>
       <div className="panel-header ui-page-header">
+        <div className="ui-page-heading">
         <h2 className="panel-title">
           <Icon size={16} className="panel-title-icon" aria-hidden />
           {title}
           {count !== undefined && <span className="ui-page-count">{count.toLocaleString()}</span>}
         </h2>
+        {description && <p className="ui-page-description">{description}</p>}
+        </div>
         {(scope || actions) && (
           <div className="panel-header-actions">
             {scope}
@@ -62,7 +68,10 @@ export function Page({
       </div>
       {tabs && <div className="ui-page-tabs">{tabs}</div>}
       {toolbar && <div className="ui-page-toolbar">{toolbar}</div>}
-      <div className={['panel-content', 'ui-page-body', flush && 'ui-page-body--flush', bodyClassName].filter(Boolean).join(' ')}>
+      <div id={activeTab ? `tabpanel-${activeTab}` : undefined}
+        role={activeTab ? 'tabpanel' : undefined}
+        aria-labelledby={activeTab ? `tab-${activeTab}` : undefined}
+        className={['panel-content', 'ui-page-body', flush && 'ui-page-body--flush', bodyClassName].filter(Boolean).join(' ')}>
         {children}
       </div>
     </section>
