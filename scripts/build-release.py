@@ -27,7 +27,7 @@ ROOT_FILES = frozenset({
     'THIRD_PARTY_NOTICES.md',
 })
 SOURCE_DIRS = frozenset({'docs', 'installer', 'configs', 'scripts', 'tests', '.github'})
-BACKEND_DIRS = frozenset({'src', 'test', 'vad', 'scripts'})
+BACKEND_DIRS = frozenset({'src', 'test', 'vad', 'scripts', 'pbx-modules'})
 BACKEND_FILES = frozenset({
     'package.json', 'package-lock.json', 'schema.sql', 'tsconfig.json',
     'tsconfig.build.json', 'jest.config.js', '.env.example',
