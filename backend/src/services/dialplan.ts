@@ -308,7 +308,8 @@ async function findAmportal(): Promise<string | null> {
 
 /**
  * Apply PBX configuration (SIP/WebRTC changes made in the PBX database).
- *   Issabel: `amportal a r` (the GUI's "Apply Config": module_admin reload, which runs
+ *   Issabel: standalone uses the native do_reload adapter and verifies completion;
+ *            otherwise `amportal a r` (the GUI's "Apply Config": module_admin reload, which runs
  *            retrieve_conf and reloads Asterisk); without amportal,
  *            `retrieve_conf && asterisk -rx "core reload"`.
  *   FreePBX: `fwconsole reload`.
@@ -319,8 +320,16 @@ export async function reloadAsteriskSip(pbxType: string | null = null): Promise<
     let result: CompletedProcess;
     if (kind === 'issabel') {
       if (env('MYTELDESK_DIRECT_PBX', '') === '1') {
-        result = await subprocessRun(['/var/lib/asterisk/bin/retrieve_conf'], { timeout: 120 });
-        if (result.returncode === 0) result = await subprocessRun(['asterisk', '-rx', 'core reload'], { timeout: 60 });
+        result = await subprocessRun(['/usr/bin/php', path.resolve(__dirname, '../../scripts/issabel-reload.php')], { timeout: 180 });
+        if (result.returncode === 0) {
+          let completed: unknown;
+          try { completed = JSON.parse(result.stdout); } catch { completed = null; }
+          const evidence = completed as { status?: unknown; num_errors?: unknown; reload_needed?: unknown } | null;
+          if (!evidence || evidence.status !== true || evidence.num_errors !== 0 || evidence.reload_needed !== false) {
+            log.warning('Native Issabel Apply did not confirm error-free completion and cleared pending state');
+            return false;
+          }
+        }
       } else {
         const amportal = await findAmportal();
         if (amportal) {
