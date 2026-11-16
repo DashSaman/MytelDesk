@@ -26,3 +26,18 @@ mapped-user Apply and full R3 artifact/native acceptance remain release gates.
 
 Old R2 source/artifact evidence stays intact. This source repair does not certify
 real calls, audio, recording, VAD, or a final pristine installation.
+
+## Unpublished R4: native working-directory parity
+
+Issabel's `module_admin` enters configured `AMPWEBROOT/admin/` before calling
+`do_reload()`. The adapter now does the same, and refuses a missing, malformed,
+non-directory or unenterable target before calling reload. Configured absolute
+web roots, including a trailing slash, retain their native behavior.
+
+The test-only checkpoint `e1e933b` executed under isolated UID65534/PHP7.4 against
+the R3 adapter and failed exactly at CWD assertion #3. The minimal repair passed
+52/52 native boundary checks and both PHP syntax checks. Fixture-owned relative
+PRE/POST includes verify the working directory without running host commands;
+missing/invalid/inaccessible roots verify that no reload occurs. The unchanged
+22 focused Jest checks also passed. TypeScript, media and R3 artifact bytes remain
+unchanged; full R4 artifact/native installation/media remain separate gates.

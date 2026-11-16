@@ -5,6 +5,17 @@
 
 function myteldesk_issabel_apply() {
     try {
+        global $amp_conf;
+        $webroot = is_array($amp_conf) && isset($amp_conf['AMPWEBROOT']) ? $amp_conf['AMPWEBROOT'] : null;
+        if (!is_string($webroot) || $webroot === '' || $webroot[0] !== '/' || strpos($webroot, "\0") !== false) {
+            return false;
+        }
+        // Match module_admin before native PRE/POST hooks run: their relative
+        // paths are defined from the configured web root's admin directory.
+        $admin_directory = rtrim($webroot, '/').'/admin/';
+        if (!is_dir($admin_directory) || !@chdir($admin_directory)) {
+            return false;
+        }
         $result = do_reload();
         if (!is_array($result) || !isset($result['status']) || $result['status'] !== true ||
             !isset($result['num_errors']) || !is_int($result['num_errors']) || $result['num_errors'] !== 0) {
