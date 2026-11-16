@@ -1,6 +1,7 @@
 jest.mock('child_process', () => ({ execFile: jest.fn() }));
 jest.mock('../src/db/db-manager', () => ({ getSetting: jest.fn(async (_k: string, d: unknown) => d) }));
 import * as cp from 'child_process';
+import * as path from 'path';
 import { reloadAsteriskSip, subprocessRun } from '../src/services/dialplan';
 
 const exec = cp.execFile as unknown as jest.Mock;
@@ -9,7 +10,7 @@ describe('standalone PBX account execution', () => {
   beforeEach(() => {
     process.env.MYTELDESK_DIRECT_PBX = '1';
     exec.mockReset().mockImplementation((_f, _a, _o, cb) => {
-      cb(null, Buffer.from('ok'), Buffer.from(''));
+      cb(null, Buffer.from('{"status":true,"num_errors":0,"reload_needed":false}'), Buffer.from(''));
       return { stdin: { on: jest.fn(), end: jest.fn() } };
     });
   });
@@ -23,13 +24,13 @@ describe('standalone PBX account execution', () => {
     await subprocessRun(['sudo', 'asterisk', '-rx', 'core show uptime']);
     expect(exec.mock.calls[0].slice(0, 2)).toEqual(['sudo', ['asterisk', '-rx', 'core show uptime']]);
   });
-  it('regenerates Issabel configuration then reloads without invoking root amportal', async () => {
+  it('uses one complete native apply without invoking root amportal', async () => {
     expect(await reloadAsteriskSip('Issabel')).toBe(true);
     expect(exec.mock.calls.map(c => c.slice(0, 2))).toEqual([
-      ['/var/lib/asterisk/bin/retrieve_conf', []], ['asterisk', ['-rx', 'core reload']],
+      ['/usr/bin/php', [path.resolve(__dirname, '../scripts/issabel-reload.php')]],
     ]);
   });
-  it('does not reload if config generation fails', async () => {
+  it('does not report success when the native apply command fails', async () => {
     exec.mockImplementationOnce((_f, _a, _o, cb) => { cb({ code: 1 }, Buffer.from(''), Buffer.from('failed')); });
     expect(await reloadAsteriskSip('Issabel')).toBe(false);
     expect(exec).toHaveBeenCalledTimes(1);
