@@ -328,7 +328,69 @@ def fetch_verified(url, path, expected):
         raise RuntimeError('Runtime checksum mismatch')
 
 
-def ensure_runtime(bundle):
+def offline_fetcher(root, manifest_sha256, expected_uid=0):
+    """Resolve only checksum-pinned Node/wheels; offline never tries the network."""
+    root = Path(root)
+    if not root.is_absolute() or root.resolve() != root.absolute():
+        raise ValueError('Offline media root must be canonical and contain no links')
+    def trusted(path, directory=False):
+        info = path.lstat()
+        if not (stat.S_ISDIR(info.st_mode) if directory else stat.S_ISREG(info.st_mode)):
+            raise ValueError('Offline media link or special file refused')
+        if os.name == 'posix' and (info.st_uid != expected_uid or info.st_mode & 0o022):
+            raise ValueError('Offline media must be root-owned and not writable by others')
+        return info
+    trusted(root, True)
+    manifest = root / 'manifest.json'; info = trusted(manifest)
+    if not 0 < info.st_size <= 32 * 1024 * 1024: raise ValueError('Offline manifest is oversized')
+    raw = manifest.read_bytes()
+    if (not re.fullmatch('[0-9a-f]{64}', str(manifest_sha256))
+            or hashlib.sha256(raw).hexdigest() != manifest_sha256):
+        raise ValueError('Offline manifest checksum mismatch')
+    value = json.loads(raw.decode('utf-8'))
+    if (type(value.get('schema')) is not int or value['schema'] != 1
+            or value.get('owner') != 'MyTellPBX' or value.get('platform') != 'rocky8.10-x86_64'
+            or not isinstance(value.get('files'), dict) or not isinstance(value.get('wheels'), list)):
+        raise ValueError('Unknown offline media profile')
+    assets = {}
+    for name in [value.get('node')] + value['wheels']:
+        relative_name(name)
+        if name not in value['files'] or Path(name).name in assets: raise ValueError('Missing or duplicate offline runtime asset')
+        record = value['files'][name]
+        if (not isinstance(record, dict) or type(record.get('bytes')) is not int
+                or not 0 < record['bytes'] <= 512 * 1024 * 1024
+                or not re.fullmatch('[0-9a-f]{64}', str(record.get('sha256')))):
+            raise ValueError('Invalid offline runtime pin')
+        assets[Path(name).name] = (name, record)
+    def fetch(url, destination, expected):
+        name = urlsplit(url).path.rsplit('/', 1)[-1]
+        if name not in assets: raise ValueError('Pinned asset is absent from offline media')
+        relative, record = assets[name]
+        if record['sha256'] != expected: raise ValueError('Offline asset differs from release pin')
+        source = root / relative
+        if source.resolve() != source.absolute(): raise ValueError('Offline asset path contains a link')
+        for parent in source.parents:
+            if parent == root: break
+            trusted(parent, True)
+        before = trusted(source)
+        if before.st_size != record['bytes']: raise ValueError('Offline asset size mismatch')
+        def identity(meta):
+            return (meta.st_dev, meta.st_ino, meta.st_size, meta.st_mode, meta.st_uid,
+                    meta.st_gid, meta.st_mtime_ns, meta.st_ctime_ns if os.name == 'posix' else None)
+        fd = os.open(str(source), os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0))
+        with os.fdopen(fd, 'rb') as stream:
+            if identity(os.fstat(stream.fileno())) != identity(before): raise ValueError('Offline asset changed')
+            data = stream.read(record['bytes'] + 1)
+            if (len(data) != record['bytes'] or hashlib.sha256(data).hexdigest() != expected
+                    or identity(os.fstat(stream.fileno())) != identity(before)
+                    or identity(source.lstat()) != identity(before)):
+                raise ValueError('Offline asset checksum or identity mismatch')
+        with open(str(destination), 'xb') as output: output.write(data)
+    return fetch
+
+
+def ensure_runtime(bundle, fetch=None):
+    fetch = fetch or fetch_verified
     pin = json.loads((bundle / 'installer/runtime.json').read_text())
     name = 'node-' + pin['version'] + '-linux-x64'
     runtime = ROOT / 'runtime' / name
@@ -339,7 +401,7 @@ def ensure_runtime(bundle):
         runtime.parent.chmod(0o755)
         with tempfile.TemporaryDirectory(prefix='myteldesk-node-') as tmp:
             archive = Path(tmp) / 'node.tar.xz'
-            fetch_verified('https://nodejs.org/dist/' + pin['version'] + '/' + name + '.tar.xz', archive, pin['sha256'])
+            fetch('https://nodejs.org/dist/' + pin['version'] + '/' + name + '.tar.xz', archive, pin['sha256'])
             # Official Node includes symlinks. Use tar after checksum verification;
             # extract into private temp then move only the expected top-level dir.
             run(['tar', '--no-same-owner', '--no-same-permissions', '-xJf', str(archive), '-C', tmp])
@@ -460,7 +522,10 @@ def wait_proxy_after_reload(public_url, timeout=60):
     raise RuntimeError('Apache product proxy did not become ready; inspect Apache configuration')
 
 
-def install(bundle, public_url=None):
+def install(bundle, public_url=None, offline_media=None, offline_manifest_sha256=None):
+    if bool(offline_media) != bool(offline_manifest_sha256):
+        raise ValueError('Offline media root and manifest checksum are required together')
+    fetch = offline_fetcher(offline_media, offline_manifest_sha256) if offline_media else fetch_verified
     progress(1, 'Verifying release and Issabel prerequisites')
     manifest = verify_bundle(bundle)
     platform = detect_platform(Path('/etc/os-release').read_text(), run(['asterisk', '-V']).stdout, os.uname().machine)
@@ -508,7 +573,7 @@ def install(bundle, public_url=None):
         state = dict(owner='MytelDesk', schema=1, status='preparing', public_url=public_url, platform=platform)
         save_state(state)
     progress(2, 'Installing checksum-pinned private Node runtime')
-    node = ensure_runtime(bundle)
+    node = ensure_runtime(bundle, fetch=fetch) if offline_media else ensure_runtime(bundle)
     release = ROOT / 'releases' / (manifest['version'] + '-' + manifest['source_tree'][:12])
     release.parent.mkdir(exist_ok=True)
     release.parent.chmod(0o755)
@@ -521,7 +586,10 @@ def install(bundle, public_url=None):
             elif item.is_dir(): item.chmod(0o755)
         release.chmod(0o755)
     progress(3, 'Provisioning and verifying automatic CPU voice analysis')
-    vad_environment = ensure_vad(release, ROOT / 'runtime/vad', run, fetch_verified, service_user='asterisk')
+    if offline_media:
+        vad_environment = ensure_vad(release, ROOT / 'runtime/vad', run, fetch, service_user='asterisk', offline=True)
+    else:
+        vad_environment = ensure_vad(release, ROOT / 'runtime/vad', run, fetch_verified, service_user='asterisk')
     if set(vad_environment) != {'VAD_PYTHON', 'VAD_MODEL_PATH', 'VAD_MODEL_SHA256'}:
         raise RuntimeError('VAD provisioner returned incomplete environment configuration')
     recording = prepare_recording_module(release, run, state.get('recording_module'))
@@ -744,6 +812,8 @@ def main():
     parser.add_argument('action', nargs='?', choices=('install', 'doctor', 'rollback', 'uninstall'), default='install')
     parser.add_argument('--bundle', type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument('--public-url', help='HTTPS address of this Issabel server')
+    parser.add_argument('--offline-media', type=Path)
+    parser.add_argument('--offline-manifest-sha256')
     args = parser.parse_args()
     if os.name != 'posix' or os.geteuid() != 0: raise RuntimeError('Run this installer as root on the Issabel server')
     def terminated(_signum, _frame): raise KeyboardInterrupt('Installer interrupted; configuration transaction will be restored')
@@ -755,7 +825,7 @@ def main():
         if args.action == 'doctor': doctor()
         elif args.action == 'rollback': rollback()
         elif args.action == 'uninstall': uninstall()
-        else: install(args.bundle.resolve(), args.public_url)
+        else: install(args.bundle.resolve(), args.public_url, args.offline_media, args.offline_manifest_sha256)
 
 
 if __name__ == '__main__':

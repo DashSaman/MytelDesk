@@ -165,7 +165,7 @@ def _write_marker(directory, fingerprint, status):
         if temporary.exists(): temporary.unlink()
 
 
-def ensure_vad(bundle, runtime_root, run, fetch_verified, service_user='asterisk'):
+def ensure_vad(bundle, runtime_root, run, fetch_verified, service_user='asterisk', offline=False):
     """Return secret-free VAD environment values after provision and user probe."""
     _service_user(service_user)
     runtime_root = _no_parent_links(runtime_root)
@@ -203,6 +203,8 @@ def ensure_vad(bundle, runtime_root, run, fetch_verified, service_user='asterisk
     except OSError:
         available = None
     if available is None or available.returncode:
+        if offline:
+            raise RuntimeError('Offline VAD requires Python3.11 and python3.11-pip installed from the signed local RPM repository')
         try:
             _run(run, ['dnf', '-y', '--disablerepo=*', '--enablerepo=baseos', '--enablerepo=appstream',
                        '--setopt=timeout=30', '--setopt=retries=2',
