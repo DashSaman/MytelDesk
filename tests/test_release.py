@@ -69,6 +69,20 @@ class ReleaseTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     builder.select_source_paths(self.source, [path])
 
+    def test_native_recording_module_payload_is_staged_from_git(self):
+        builder = load_builder()
+        files = {
+            'backend/pbx-modules/myteldeskrecording/functions.inc.php': b'<?php // fixed native module fixture\n',
+            'backend/pbx-modules/myteldeskrecording/module.xml': b'<module><rawname>myteldeskrecording</rawname></module>\n',
+        }
+        for name in files:
+            write(self.source/name, b'local bytes are not authoritative')
+        write(self.source/'backend/pbx-modules/foreign-untracked/module.xml', b'untracked')
+        builder.stage_sources(self.source, self.stage, files, blobs=files)
+        actual = {p.relative_to(self.stage).as_posix(): p.read_bytes()
+                  for p in self.stage.rglob('*') if p.is_file()}
+        self.assertEqual(actual, files)
+
     def test_unapproved_root_content_is_not_part_of_package(self):
         builder = load_builder()
         for name in ('README.md', 'random-host-export.txt'):

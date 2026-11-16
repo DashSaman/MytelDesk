@@ -1,5 +1,6 @@
 """Real installer orchestration against an isolated filesystem and fake commands."""
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -11,6 +12,8 @@ from unittest import mock
 
 spec=importlib.util.spec_from_file_location('install_vad_lifecycle',Path(__file__).resolve().parents[1]/'installer/install.py')
 mod=importlib.util.module_from_spec(spec);spec.loader.exec_module(mod)
+REAL_WAIT_HEALTH = mod.wait_health
+REAL_VERIFY_PROXY = mod.verify_proxy
 
 
 class VadInstallLifecycle(unittest.TestCase):
@@ -53,6 +56,18 @@ class VadInstallLifecycle(unittest.TestCase):
         self.provision=provision_patch.start();self.addCleanup(provision_patch.stop)
         doctor_patch=mock.patch.object(mod,'doctor_vad',return_value={'status':'ok','engine':'silero'},create=True)
         self.doctor=doctor_patch.start();self.addCleanup(doctor_patch.stop)
+        self.recording = SimpleNamespace(record={'schema':1,'fixture':'owned-module'},intent={'fixture':'module-intent'},
+            started=False,activate=mock.Mock(),doctor=mock.Mock(),before_restore=mock.Mock(),after_restore=mock.Mock(),remove=mock.Mock(),untouched=mock.Mock())
+        def activate(_transaction, on_begin=None):
+            self.recording.started=True
+            self.recording.intent['started']=True
+            if on_begin: on_begin()
+        self.recording.activate.side_effect=activate
+        for name, value in [('prepare_recording_module',mock.Mock(return_value=self.recording)),
+                            ('recording_from_intent',mock.Mock(return_value=self.recording)),
+                            ('recording_for_restore',mock.Mock(return_value=self.recording)),
+                            ('apply_native_recording',mock.Mock())]:
+            patch=mock.patch.object(mod,name,value,create=True); patch.start(); self.addCleanup(patch.stop)
 
     def existing(self,version='1.0.0',tree='c'*40):
         self.config.mkdir();self.root.mkdir();self.data.mkdir()
@@ -70,6 +85,172 @@ class VadInstallLifecycle(unittest.TestCase):
         values=mod.read_key_values(self.env)
         for key,value in self.vad.items():self.assertEqual(values[key],value)
         self.assertNotIn('RECORDING_ENABLED',values)
+
+    def test_recording_generation_module_is_activated_applied_and_live_checked(self):
+        mod.install(self.bundle,'https://pbx.example')
+        self.recording.activate.assert_called_once()
+        mod.apply_native_recording.assert_called_once()
+        self.recording.doctor.assert_called_once()
+        self.assertEqual(json.loads(self.state_file.read_text())['recording_module'],self.recording.record)
+
+    def test_recording_module_rollback_runs_on_failed_activation(self):
+        mod.wait_health.side_effect=RuntimeError('synthetic activation failure')
+        with self.assertRaisesRegex(RuntimeError,'synthetic activation failure'):mod.install(self.bundle,'https://pbx.example')
+        self.recording.before_restore.assert_called_once()
+        self.recording.after_restore.assert_called_once()
+
+    def test_recording_prewrite_refusal_never_stops_service_or_applies_pending_changes(self):
+        self.recording.activate.side_effect=RuntimeError('operator pending changes appeared')
+        with self.assertRaisesRegex(RuntimeError,'operator pending changes'):mod.install(self.bundle,'https://pbx.example')
+        mod.apply_native_recording.assert_not_called()
+        self.recording.before_restore.assert_not_called()
+        self.assertNotIn(['systemctl','stop','myteldesk'],self.calls)
+
+    def test_untouched_recording_crash_recovery_does_not_apply_or_stop(self):
+        previous=self.existing(); directory=self.config/'backups/untouched'; directory.mkdir(parents=True)
+        (directory/'previous-state.json').write_text(json.dumps(previous))
+        state=dict(previous,pending_journal=str(directory/'journal.json'),pending_recording=self.recording.intent)
+        self.recording.started=False
+        self.assertEqual(mod.recover_pending(state),previous)
+        mod.apply_native_recording.assert_not_called(); self.recording.before_restore.assert_not_called()
+        self.recording.untouched.assert_called_once(); self.assertEqual(self.calls,[])
+
+    def install_with_real_health(self, ready_after):
+        clock = [0]
+        self.activation_values = None
+        def response(*_args, **_kwargs):
+            if self.activation_values is None:
+                self.activation_values = mod.read_key_values(self.env)
+            if ready_after is None or clock[0] < ready_after:
+                raise OSError('synthetic cold storage startup')
+            return io.BytesIO(b'{"status":"ok","ami_connected":true}')
+        mod.wait_health.side_effect = REAL_WAIT_HEALTH
+        with mock.patch.object(mod.time, 'time', side_effect=lambda: clock[0]), \
+             mock.patch.object(mod.time, 'sleep', side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)), \
+             mock.patch.object(mod, 'urlopen', side_effect=response), mock.patch('sys.stdout', io.StringIO()) as output:
+            try:
+                mod.install(self.bundle, 'https://pbx.example')
+            finally:
+                self.elapsed = clock[0]
+                self.readiness_output = output.getvalue()
+
+    def test_cold_activation_can_finish_after_the_old_300_second_deadline(self):
+        failure = None
+        try:
+            self.install_with_real_health(360)
+        except RuntimeError as error:
+            failure = error
+        self.assertIsNone(failure, 'Cold activation stopped before simulated readiness: ' + str(failure))
+        self.assertEqual(self.elapsed, 360)
+        self.assertEqual(json.loads(self.state_file.read_text())['status'], 'ready')
+        mod.wait_health.assert_called_once_with(timeout=900)
+        self.assertIn('elapsed (limit 900s)', self.readiness_output)
+
+    def test_early_ready_activation_does_not_wait_for_the_new_budget(self):
+        self.install_with_real_health(0)
+        self.assertEqual(self.elapsed, 0)
+        self.assertEqual(json.loads(self.state_file.read_text())['status'], 'ready')
+        mod.wait_health.assert_called_once_with(timeout=900)
+        self.assertNotIn('Waiting for backend', self.readiness_output)
+
+    def test_failed_cold_activation_is_bounded_and_preserves_prepared_secrets(self):
+        with self.assertRaisesRegex(RuntimeError, 'Backend/AMI did not become ready'):
+            self.install_with_real_health(None)
+        self.assertEqual(self.elapsed, 900)
+        self.assertEqual(json.loads(self.state_file.read_text())['status'], 'prepared')
+        after = mod.read_key_values(self.env)
+        for key in ('DB_PASSWORD', 'JWT_SECRET', 'AMI_SECRET', 'OPDESK_BRIDGE_PW'):
+            self.assertEqual(after[key], self.activation_values[key])
+        self.assertFalse(self.unit.exists()); self.assertFalse(self.proxy.exists()); self.assertFalse(self.ami.exists())
+        self.assertIn(['systemctl', 'stop', 'myteldesk'], self.calls)
+        self.assertNotIn('Installation verified:', self.readiness_output)
+
+    def test_upgrade_keeps_300_second_budget_and_rolls_back_on_late_readiness(self):
+        self.existing(); before = self.env.read_bytes()
+        with self.assertRaisesRegex(RuntimeError, 'Backend/AMI did not become ready'):
+            self.install_with_real_health(360)
+        self.assertEqual(self.elapsed, 300)
+        self.assertEqual(self.env.read_bytes(), before)
+        self.assertEqual(json.loads(self.state_file.read_text())['status'], 'ready')
+        mod.wait_health.assert_called_once_with()
+
+    def install_with_real_proxy(self, mode):
+        clock = [0]; attempts = [0]; self.proxy_requests = []; self.activation_values = None
+        owner = self
+        class Connection:
+            def __init__(self, host, port, **_kwargs):
+                owner.assertEqual((host, port), ('127.0.0.1', 443))
+            def request(self, method, route, headers=None):
+                owner.assertEqual(method, 'GET'); owner.assertEqual(headers['Host'], 'pbx.example')
+                self.route = route; owner.proxy_requests.append(route)
+            def getresponse(self):
+                status = 200
+                if self.route == '/MytellDesk/health':
+                    attempts[0] += 1
+                    if owner.activation_values is None: owner.activation_values = mod.read_key_values(owner.env)
+                    if mode == 'always-404' or mode == 'first-404' and attempts[0] == 1: status = 404
+                    body = b'{"status":"ok","ami_connected":false}' if mode == 'bad-ami' else b'{"status":"ok","ami_connected":true}'
+                elif self.route == '/MytellDesk/':
+                    body = b'<html><script src="/MytellDesk/assets/fixture.js"></script></html>'
+                else:
+                    owner.assertEqual(self.route, '/MytellDesk/assets/fixture.js')
+                    status = 404 if mode == 'bad-asset' else 200
+                    body = b'window.fixture=true;'
+                return SimpleNamespace(status=status, read=lambda size=None: body if size is None else body[:size])
+            def close(self): pass
+        mod.verify_proxy.side_effect = REAL_VERIFY_PROXY
+        with mock.patch.object(mod.http.client, 'HTTPSConnection', Connection), \
+             mock.patch.object(mod.time, 'monotonic', side_effect=lambda: clock[0]), \
+             mock.patch.object(mod.time, 'sleep', side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)), \
+             mock.patch('sys.stdout', io.StringIO()) as output:
+            try:
+                mod.install(self.bundle, 'https://pbx.example')
+            finally:
+                self.proxy_elapsed = clock[0]; self.proxy_progress = output.getvalue(); self.proxy_attempts = attempts[0]
+
+    def test_activation_waits_for_apache_graceful_after_an_initial_404(self):
+        failure = None
+        try:
+            self.install_with_real_proxy('first-404')
+        except RuntimeError as error:
+            failure = error
+        self.assertIsNone(failure, 'Transient pre-graceful404 caused rollback: ' + str(failure))
+        self.assertEqual(json.loads(self.state_file.read_text())['status'], 'ready')
+        self.assertEqual(self.proxy_attempts, 2)
+        self.assertEqual(self.proxy_elapsed, 2)
+        self.assertIn('/MytellDesk/assets/fixture.js', self.proxy_requests)
+
+    def test_persistent_proxy_route_ami_or_asset_failure_is_bounded_and_rolls_back(self):
+        for mode in ['always-404', 'bad-ami', 'bad-asset']:
+            with self.subTest(mode=mode):
+                with self.assertRaises(RuntimeError): self.install_with_real_proxy(mode)
+                self.assertEqual(self.proxy_elapsed, 60)
+                self.assertGreater(self.proxy_attempts, 1)
+                self.assertIn('elapsed (limit 60s)', self.proxy_progress)
+                self.assertEqual(json.loads(self.state_file.read_text())['status'], 'prepared')
+                values = mod.read_key_values(self.env)
+                for key in ('DB_PASSWORD', 'JWT_SECRET', 'AMI_SECRET', 'OPDESK_BRIDGE_PW'):
+                    self.assertEqual(values[key], self.activation_values[key])
+                self.assertFalse(self.proxy.exists()); self.assertFalse(self.unit.exists()); self.assertFalse(self.ami.exists())
+                self.assertNotIn('Installation verified:', self.proxy_progress)
+
+    def test_doctor_proxy_failure_remains_immediate(self):
+        self.existing(); mod.verify_proxy.side_effect = RuntimeError('bad existing proxy')
+        with mock.patch.object(mod.time, 'sleep') as sleep:
+            with self.assertRaisesRegex(RuntimeError, 'bad existing proxy'): mod.doctor()
+        mod.verify_proxy.assert_called_once_with('https://pbx.example/MytellDesk/')
+        sleep.assert_not_called()
+
+    def test_same_ready_proxy_failure_remains_immediate(self):
+        self.existing(version='1.1.0', tree='a'*40)
+        with self.env.open('a') as stream:
+            stream.write(''.join(key + '=' + value + '\n' for key, value in self.vad.items()))
+        mod.verify_proxy.side_effect = RuntimeError('bad existing proxy')
+        with mock.patch.object(mod.time, 'sleep') as sleep:
+            with self.assertRaisesRegex(RuntimeError, 'bad existing proxy'): mod.install(self.bundle, 'https://pbx.example')
+        mod.wait_health.assert_called_once_with(20)
+        mod.verify_proxy.assert_called_once_with('https://pbx.example/MytellDesk/')
+        sleep.assert_not_called()
 
     def test_fresh_download_failure_can_be_retried_without_manual_directory_deletion(self):
         self.provision.side_effect=[RuntimeError('temporary download failure'),self.vad]

@@ -1,0 +1,10 @@
+<module>
+  <rawname>myteldeskrecording</rawname>
+  <name>MytelDesk recording integration</name>
+  <version>1.0.0</version>
+  <description>Preserves native recording policy and reaches MytelDesk recording from supported Issabel generation hooks.</description>
+  <category>Connectivity</category>
+  <type>setup</type>
+  <license>GPLv3+</license>
+  <depends><module>core</module></depends>
+</module>

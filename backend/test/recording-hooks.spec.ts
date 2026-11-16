@@ -73,6 +73,24 @@ describe('recordingHookConflicts', () => {
   });
 });
 
+describe('Issabel native recording entry readiness', () => {
+  let previousPbx: string | undefined;
+  const token = 'GosubIf($[${DIALPLAN_EXISTS(opdesk-record,s,1)} & "${OPDESK_REC}"="" & "${REC_STATUS}"!="RECORDING" & "${CDR(recordingfile)}"=""]?opdesk-record,s,1(${ARG1},${ARG2}))';
+  beforeEach(() => { previousPbx = process.env.PBX; process.env.PBX = 'Issabel'; mockCli[ONE] = OURS_ONE; mockCli[TRUNK] = CHAINED_TRUNK; });
+  afterEach(() => { if (previousPbx === undefined) delete process.env.PBX; else process.env.PBX = previousPbx; });
+  test('legacy hook presence alone cannot claim the dead native call path is ready', async () => {
+    expect(await dialplan.recordingHookConflicts()).toEqual(['exten', 'out', 'rg', 'q'].map(name => ({ context: name + '@sub-record-check', file: null })));
+  });
+  test('requires all five live fallback entries and preserves the trunk conflict check', async () => {
+    for (const [name, count] of [['exten', 2], ['out', 1], ['rg', 1], ['q', 1]] as const) {
+      mockCli['dialplan show ' + name + '@sub-record-check'] = Array.from({ length: count }, (_, i) => ` ${i + 1}. ${token} [extensions_additional.conf:10]`).join('\n');
+    }
+    expect(await dialplan.recordingHookConflicts()).toEqual([]);
+    mockCli['dialplan show exten@sub-record-check'] = ' 1. ' + token + ' [extensions_additional.conf:10]';
+    expect(await dialplan.recordingHookConflicts()).toEqual([{ context: 'exten@sub-record-check', file: 'extensions_additional.conf' }]);
+  });
+});
+
 describe('hookConflictMessage', () => {
   test('names each owning file once and says what to do', () => {
     const msg = hookConflictMessage([
