@@ -73,7 +73,6 @@ describe('recording dialplan', () => {
       '[opdesk-record]',
       'exten => s,1,GosubIf($["${OPDESK_REC}"=""]?opdesk-record,s,1)',
       ' same => n,Set(__OPDESK_REC=1)',
-      ' same => n,Set(OPDESK_BASE=${OPDESK_TS}-${CALLERID(num)}-${OPDESK_DST}-${UNIQUEID})',
       ' same => n,Set(OPDESK_MIX=/var/spool/asterisk/monitor/${OPDESK_DAY}/${OPDESK_BASE}.wav)',
       ' same => n,Set(OPDESK_SP1=/var/spool/asterisk/single/${OPDESK_DAY}/${OPDESK_BASE}-sp1.wav)',
       ' same => n,Set(CDR(recordingfile)=${OPDESK_BASE}.wav)',
@@ -82,6 +81,9 @@ describe('recording dialplan', () => {
       expect(python).toContain(line);
       expect(conf).toContain(line);
     }
+    // Historical fixture remains honest; new output filters filename components.
+    expect(python).toContain('Set(OPDESK_BASE=${OPDESK_TS}-${CALLERID(num)}-${OPDESK_DST}-${UNIQUEID})');
+    expect(conf).toContain('Set(OPDESK_BASE=${OPDESK_TS}-${OPDESK_FILE_CID}-${OPDESK_FILE_DST}-${OPDESK_FILE_UID})');
   });
 
   it('records only while bridged (MixMonitor b flag)', () => {
@@ -91,11 +93,11 @@ describe('recording dialplan', () => {
 
   it('applies the opt-out policy from the opdesk AstDB family', () => {
     expect(conf).toContain(
-      ' same => n,Set(OPDESK_DIR=${IF($["${FROM_DID}"!=""]?inbound:${IF($["${DIAL_TRUNK}"!=""]?outbound:internal)})})',
+      ' same => n,Set(OPDESK_DIR=${IF($["${FROM_DID}"!=""]?inbound:${IF($["${OPDESK_NATIVE_KIND}"="out" | "${DIAL_TRUNK}"!=""]?outbound:internal)})})',
     );
     expect(conf).toContain(' same => n,GotoIf($["${DB(opdesk/rec/dir/${OPDESK_DIR})}"="0"]?skip)');
     expect(conf).toContain(' same => n,GotoIf($["${DB(opdesk/rec/ext/${OPDESK_EXT})}"="0"]?skip)');
-    expect(conf).toContain(' same => n,GotoIf($["${DB(opdesk/rec/ext/${EXTTOCALL})}"="0"]?skip)');
+    expect(conf).toContain(' same => n,GotoIf($["${DB(opdesk/rec/ext/${OPDESK_POLICY_DST})}"="0"]?skip)');
     expect(conf).toMatch(/ same => n\(skip\),NoOp\(OpDesk recording skipped by policy/);
     // the skip label is reached only past the normal Return()
     expect(conf.indexOf(' same => n,Return()\n same => n(skip)')).toBeGreaterThan(0);

@@ -700,9 +700,9 @@ export function renderRecordingConf(opts: { format: string; vad: boolean; pbx?: 
 ;   sp1   -> __SINGLEDIR__/YYYY/MM/DD/<base>-sp1.__FMT__ (caller leg, r() receive)
 ;   sp2   -> __SINGLEDIR__/YYYY/MM/DD/<base>-sp2.__FMT__ (callee leg, t() transmit)
 ;
-; The predial-hook stubs ship blank in extensions.conf to be overridden; defining them
-; here (included from extensions_custom.conf, parsed before the stubs) wins the
-; duplicate-priority race so this version runs instead of the no-op stub.
+; On Issabel the owned myteldeskrecording module also reaches this context from
+; native sub-record-check exits; modern dial-one does not call the legacy hook.
+; Existing native recordings take precedence and are never replaced here.
 ;
 ; Policy (Settings -> Recordings) lives in the AstDB: opdesk/rec/dir/<direction> and
 ; opdesk/rec/ext/<extension> set to 0 switch recording off for that direction / extension.
@@ -717,17 +717,24 @@ exten => s,1,GosubIf($["\${OPDESK_REC}"=""]?opdesk-record,s,1)
 
 [opdesk-record]
 exten => s,1,NoOp(OpDesk recording start on \${CHANNEL})
+ same => n,GotoIf($["\${REC_STATUS}"="RECORDING" | "\${CDR(recordingfile)}"!=""]?native)
+ same => n,Set(OPDESK_NATIVE_KIND=\${ARG1})
  same => n,Set(__OPDESK_REC=1)
- same => n,Set(OPDESK_DIR=\${IF($["\${FROM_DID}"!=""]?inbound:\${IF($["\${DIAL_TRUNK}"!=""]?outbound:internal)})})
+ same => n,Set(OPDESK_DIR=\${IF($["\${FROM_DID}"!=""]?inbound:\${IF($["\${OPDESK_NATIVE_KIND}"="out" | "\${DIAL_TRUNK}"!=""]?outbound:internal)})})
  same => n,GotoIf($["\${DB(opdesk/rec/dir/\${OPDESK_DIR})}"="0"]?skip)
  same => n,Set(OPDESK_EXT=\${IF($["\${AMPUSER}"!=""]?\${AMPUSER}:\${CALLERID(num)})})
  same => n,GotoIf($["\${DB(opdesk/rec/ext/\${OPDESK_EXT})}"="0"]?skip)
- same => n,GotoIf($["\${EXTTOCALL}"=""]?start)
- same => n,GotoIf($["\${DB(opdesk/rec/ext/\${EXTTOCALL})}"="0"]?skip)
+ same => n,Set(OPDESK_POLICY_DST=\${IF($["\${OPDESK_NATIVE_KIND}"="exten"]?\${ARG2}:\${IF($["\${OPDESK_NATIVE_KIND}"=""]?\${EXTTOCALL}:)})})
+ same => n,GotoIf($["\${OPDESK_POLICY_DST}"=""]?start)
+ same => n,GotoIf($["\${DB(opdesk/rec/ext/\${OPDESK_POLICY_DST})}"="0"]?skip)
  same => n(start),Set(OPDESK_TS=\${STRFTIME(\${EPOCH},,%Y%m%d-%H%M%S)})
  same => n,Set(OPDESK_DAY=\${STRFTIME(\${EPOCH},,%Y/%m/%d)})
- same => n,Set(OPDESK_DST=\${IF($["\${EXTTOCALL}"!=""]?\${EXTTOCALL}:\${CALLERID(dnid)})})
- same => n,Set(OPDESK_BASE=\${OPDESK_TS}-\${CALLERID(num)}-\${OPDESK_DST}-\${UNIQUEID})
+ same => n,Set(OPDESK_DST=\${IF($["\${ARG2}"!=""]?\${ARG2}:\${IF($["\${EXTTOCALL}"!=""]?\${EXTTOCALL}:\${CALLERID(dnid)})})})
+ ; Filter filename components only; caller identity and native CDR fields stay intact.
+ same => n,Set(OPDESK_FILE_CID=\${FILTER(0-9A-Za-z_.+\\-,\${CALLERID(num)})})
+ same => n,Set(OPDESK_FILE_DST=\${FILTER(0-9A-Za-z_.+\\-,\${OPDESK_DST})})
+ same => n,Set(OPDESK_FILE_UID=\${FILTER(0-9A-Za-z_.+\\-,\${UNIQUEID})})
+ same => n,Set(OPDESK_BASE=\${OPDESK_TS}-\${OPDESK_FILE_CID}-\${OPDESK_FILE_DST}-\${OPDESK_FILE_UID})
  same => n,Set(OPDESK_MIX=__MIXDIR__/\${OPDESK_DAY}/\${OPDESK_BASE}.__FMT__)
  same => n,Set(OPDESK_SP1=__SINGLEDIR__/\${OPDESK_DAY}/\${OPDESK_BASE}-sp1.__FMT__)
  same => n,Set(OPDESK_SP2=__SINGLEDIR__/\${OPDESK_DAY}/\${OPDESK_BASE}-sp2.__FMT__)
@@ -738,6 +745,8 @@ exten => s,1,NoOp(OpDesk recording start on \${CHANNEL})
  same => n,NoOp(OpDesk recording: mix=\${OPDESK_MIX} sp1=\${OPDESK_SP1} sp2=\${OPDESK_SP2})
 __VAD_RECORD_LINES__ same => n,Return()
  same => n(skip),NoOp(OpDesk recording skipped by policy: dir=\${OPDESK_DIR} ext=\${OPDESK_EXT} dst=\${EXTTOCALL})
+ same => n,Return()
+ same => n(native),NoOp(OpDesk recording preserves existing native recorder)
  same => n,Return()
 `;
   let content = template;
@@ -904,17 +913,28 @@ export interface RecordingHookConflict {
  */
 export async function recordingHookConflicts(): Promise<RecordingHookConflict[] | null> {
   const out: RecordingHookConflict[] = [];
-  for (const context of RECORD_HOOK_CONTEXTS) {
+  // Native Issabel dial-one never invokes the legacy one-predial hook. Inspect
+  // the actual shared recording entry points, not merely the unused hook file.
+  const targets = pbxKind() === 'issabel'
+    ? [
+        ...(['exten', 'out', 'rg', 'q'] as const).map((name) => ({ context: name + '@sub-record-check', query: name + '@sub-record-check', expected: name === 'exten' ? 2 : 1 })),
+        { context: 'macro-dialout-trunk-predial-hook', query: 's@macro-dialout-trunk-predial-hook', expected: 0 },
+      ]
+    : RECORD_HOOK_CONTEXTS.map((context) => ({ context, query: 's@' + context, expected: 0 }));
+  for (const { context, query, expected } of targets) {
     let text: string;
     try {
-      const r = await subprocessRun(['sudo', 'asterisk', '-rx', `dialplan show s@${context}`], { timeout: 10 });
+      const r = await subprocessRun(['sudo', 'asterisk', '-rx', `dialplan show ${query}`], { timeout: 10 });
       if (r.returncode !== 0) return null;
       text = r.stdout || '';
     } catch (e) {
       log.warning('Could not read the %s dialplan: %s', context, e);
       return null;
     }
-    if (text.includes('opdesk-record')) continue;
+    if (expected) {
+      const count = text.split(/\r?\n/).filter((line) => /\bGosubIf\(/.test(line) && line.includes('opdesk-record,s,1(${ARG1},${ARG2})')).length;
+      if (count === expected) continue;
+    } else if (text.includes('opdesk-record')) continue;
     const m = /\[([^\]:\s]+\.conf):\d+\]/.exec(text);
     out.push({ context, file: m ? m[1] : null });
   }
