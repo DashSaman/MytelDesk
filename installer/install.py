@@ -1,8 +1,8 @@
 """MytelDesk standalone installer. Python 3.6+, standard library only.
 
-Code is immutable and root-owned; the service runs as Issabel's asterisk user.
+Code is immutable and root-owned; the service runs as the PBX asterisk user.
 The installer owns one database/account, AMI include, Apache prefix and unit.
-It does not restart Asterisk, rewrite trunks, or replace Issabel's runtime.
+It does not restart Asterisk, rewrite trunks, or replace the PBX runtime.
 """
 import argparse
 import base64
@@ -311,7 +311,7 @@ def root_database_password():
         mysql('SELECT 1;', '')
         return ''
     except RuntimeError:
-        raise RuntimeError('Cannot authenticate local MariaDB root using Issabel configuration')
+        raise RuntimeError('Cannot authenticate local MariaDB root using native PBX configuration')
 
 
 def fetch_verified(url, path, expected):
@@ -481,7 +481,7 @@ def verify_proxy(public_url):
             connection.request('GET', route, headers={'Host': authority})
             response = connection.getresponse(); body = response.read()
             if response.status != expected:
-                raise RuntimeError('Issabel HTTPS product proxy returned an unexpected status')
+                raise RuntimeError('PBX HTTPS product proxy returned an unexpected status')
             if route.endswith('/health'):
                 if json.loads(body.decode('utf-8')).get('ami_connected') is not True:
                     raise RuntimeError('HTTPS product health response was not the backend')
@@ -526,11 +526,11 @@ def install(bundle, public_url=None, offline_media=None, offline_manifest_sha256
     if bool(offline_media) != bool(offline_manifest_sha256):
         raise ValueError('Offline media root and manifest checksum are required together')
     fetch = offline_fetcher(offline_media, offline_manifest_sha256) if offline_media else fetch_verified
-    progress(1, 'Verifying release and Issabel prerequisites')
+    progress(1, 'Verifying MytelDesk release and PBX prerequisites')
     manifest = verify_bundle(bundle)
     platform = detect_platform(Path('/etc/os-release').read_text(), run(['asterisk', '-V']).stdout, os.uname().machine)
     if not Path('/etc/issabel.conf').exists() or not Path('/etc/asterisk').is_dir():
-        raise RuntimeError('This installer requires an existing Issabel PBX')
+        raise RuntimeError('This installer requires an existing supported PBX')
     import pwd, grp
     account = pwd.getpwnam('asterisk'); group = grp.getgrnam('asterisk')
     for name in ('httpd', 'mariadb', 'asterisk'):
@@ -541,7 +541,7 @@ def install(bundle, public_url=None, offline_media=None, offline_manifest_sha256
         if name not in modules: raise RuntimeError('Apache module missing: ' + name)
     ami_settings = run(['asterisk', '-rx', 'manager show settings']).stdout
     if not ami_enabled(ami_settings):
-        raise RuntimeError('Enable local Asterisk AMI first in Issabel; its global listener is not changed automatically')
+        raise RuntimeError('Enable local Asterisk AMI in the PBX first; its global listener is not changed automatically')
     state = read_state()
     if state and state.get('pending_journal'):
         state = recover_pending(state)
@@ -811,11 +811,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action', nargs='?', choices=('install', 'doctor', 'rollback', 'uninstall'), default='install')
     parser.add_argument('--bundle', type=Path, default=Path(__file__).resolve().parents[1])
-    parser.add_argument('--public-url', help='HTTPS address of this Issabel server')
+    parser.add_argument('--public-url', help='HTTPS address of this PBX server')
     parser.add_argument('--offline-media', type=Path)
     parser.add_argument('--offline-manifest-sha256')
     args = parser.parse_args()
-    if os.name != 'posix' or os.geteuid() != 0: raise RuntimeError('Run this installer as root on the Issabel server')
+    if os.name != 'posix' or os.geteuid() != 0: raise RuntimeError('Run this installer as root on the PBX server')
     def terminated(_signum, _frame): raise KeyboardInterrupt('Installer interrupted; configuration transaction will be restored')
     signal.signal(signal.SIGTERM, terminated)
     import fcntl

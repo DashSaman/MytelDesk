@@ -2,7 +2,7 @@
 # MytelDesk GPL-3.0 installer bootstrap. Host provisioning lives in installer/install.py.
 set -Eeuo pipefail
 if [[ ${EUID} -ne 0 ]]; then
-  echo 'Run as root on the existing Issabel server.' >&2
+  echo 'Run as root on the existing PBX server.' >&2
   exit 1
 fi
 PYTHON=''
