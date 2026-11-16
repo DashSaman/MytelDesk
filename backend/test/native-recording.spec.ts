@@ -22,6 +22,10 @@ describe('native Issabel recording fallback', () => {
     expect(conf).toContain('${DB(opdesk/rec/ext/${OPDESK_POLICY_DST})}');
     expect(conf).not.toContain('${DB(opdesk/rec/ext/${EXTTOCALL})}');
   });
+  it('respects an explicit native never recording policy on legacy entries too', () => {
+    expect(conf).toContain('"${REC_POLICY_MODE}"="never"');
+    expect(conf.indexOf('"${REC_POLICY_MODE}"="never"')).toBeLessThan(conf.indexOf('MixMonitor(', conf.indexOf('[opdesk-record]')));
+  });
   it('filters every untrusted filename component without changing caller identity', () => {
     for (const [name, value] of [['OPDESK_FILE_CID', '${CALLERID(num)}'], ['OPDESK_FILE_DST', '${OPDESK_DST}'], ['OPDESK_FILE_UID', '${UNIQUEID}']]) {
       expect(conf).toContain(`Set(${name}=\${FILTER(0-9A-Za-z_.+\\-,${value})})`);

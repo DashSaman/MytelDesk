@@ -48,7 +48,7 @@ foreach (array('exten'=>2,'out'=>1,'rg'=>1,'q'=>1) as $name=>$count) {
 }
 foreach(array('record','recq','recconf','s') as $name) { $original=unserialize($before);verify(serialize($after['sub-record-check'][' '.$name.' '])===serialize($original['sub-record-check'][' '.$name.' '])); }
 $original=unserialize($before);verify(serialize($after['unrelated'])===serialize($original['unrelated']));
-foreach(array('DIALPLAN_EXISTS(opdesk-record,s,1)','"${OPDESK_REC}"=""','"${REC_STATUS}"!="RECORDING"','"${CDR(recordingfile)}"=""') as $part) verify(strpos(myteldeskrecording_guard(),$part)!==false);
+foreach(array('DIALPLAN_EXISTS(opdesk-record,s,1)','"${OPDESK_REC}"=""','"${REC_STATUS}"!="RECORDING"','"${REC_POLICY_MODE}"!="never"','"${CDR(recordingfile)}"=""') as $part) verify(strpos(myteldeskrecording_guard(),$part)!==false);
 // Unknown native shape or foreign partial injection refuses before any mutation.
 foreach(array('missing','extra','label','partial') as $bad) {
     $e=fixture();
