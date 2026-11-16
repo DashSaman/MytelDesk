@@ -56,6 +56,12 @@ class VadInstallLifecycle(unittest.TestCase):
         self.provision=provision_patch.start();self.addCleanup(provision_patch.stop)
         doctor_patch=mock.patch.object(mod,'doctor_vad',return_value={'status':'ok','engine':'silero'},create=True)
         self.doctor=doctor_patch.start();self.addCleanup(doctor_patch.stop)
+        self.recording = SimpleNamespace(record={'schema':1,'fixture':'owned-module'},intent={'fixture':'module-intent'},
+            activate=mock.Mock(),doctor=mock.Mock(),before_restore=mock.Mock(),after_restore=mock.Mock(),remove=mock.Mock())
+        for name, value in [('prepare_recording_module',mock.Mock(return_value=self.recording)),
+                            ('recording_from_intent',mock.Mock(return_value=self.recording)),
+                            ('apply_native_recording',mock.Mock())]:
+            patch=mock.patch.object(mod,name,value,create=True); patch.start(); self.addCleanup(patch.stop)
 
     def existing(self,version='1.0.0',tree='c'*40):
         self.config.mkdir();self.root.mkdir();self.data.mkdir()
@@ -73,6 +79,19 @@ class VadInstallLifecycle(unittest.TestCase):
         values=mod.read_key_values(self.env)
         for key,value in self.vad.items():self.assertEqual(values[key],value)
         self.assertNotIn('RECORDING_ENABLED',values)
+
+    def test_recording_generation_module_is_activated_applied_and_live_checked(self):
+        mod.install(self.bundle,'https://pbx.example')
+        self.recording.activate.assert_called_once()
+        mod.apply_native_recording.assert_called_once()
+        self.recording.doctor.assert_called_once()
+        self.assertEqual(json.loads(self.state_file.read_text())['recording_module'],self.recording.record)
+
+    def test_recording_module_rollback_runs_on_failed_activation(self):
+        mod.wait_health.side_effect=RuntimeError('synthetic activation failure')
+        with self.assertRaisesRegex(RuntimeError,'synthetic activation failure'):mod.install(self.bundle,'https://pbx.example')
+        self.recording.before_restore.assert_called_once()
+        self.recording.after_restore.assert_called_once()
 
     def install_with_real_health(self, ready_after):
         clock = [0]

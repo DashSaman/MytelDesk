@@ -36,7 +36,7 @@ class RecordingModuleLifecycle(unittest.TestCase):
         self.target = self.admin/'modules/myteldeskrecording'
         self.row = None; self.pending = False; self.calls = []; self.bad_action = None
         self.tx = Transaction()
-    def run(self, argv, **_kwargs):
+    def command(self, argv, **_kwargs):
         self.calls.append(argv)
         if argv[:2] == ['asterisk','-rx']:
             return SimpleNamespace(returncode=0,stdout=('GosubIf(guard?opdesk-record,s,1(${ARG1},${ARG2}))\n'*5),stderr='')
@@ -52,9 +52,9 @@ class RecordingModuleLifecycle(unittest.TestCase):
             if action == 'uninstall': self.row = None; self.pending = True
             value = dict(status=True,admin=str(self.admin),module=self.row,reload_needed=self.pending)
         return SimpleNamespace(returncode=0,stdout=json.dumps(value),stderr='')
-    def plan(self, previous=None): return recording.prepare(self.release,self.run,previous)
+    def plan(self, previous=None): return recording.prepare(self.release,self.command,previous)
     def installed(self):
-        plan = self.plan(); plan.activate(self.tx); recording.apply_native(self.release,self.run)
+        plan = self.plan(); plan.activate(self.tx); recording.apply_native(self.release,self.command)
         return plan
     def test_fresh_registration_has_exact_files_and_one_native_install(self):
         plan = self.installed()
@@ -72,6 +72,14 @@ class RecordingModuleLifecycle(unittest.TestCase):
         self.pending=True
         with self.assertRaises(RuntimeError): self.plan()
         self.assertFalse(self.target.exists())
+    def test_plan_then_directory_collision_cannot_overwrite_foreign_files(self):
+        plan=self.plan(); self.target.mkdir(); foreign=self.target/'functions.inc.php'; foreign.write_bytes(b'foreign')
+        with self.assertRaises(RuntimeError):plan.activate(self.tx)
+        self.assertEqual(foreign.read_bytes(),b'foreign'); self.assertEqual(self.tx.entries,[])
+    def test_plan_then_registration_collision_cannot_install(self):
+        plan=self.plan(); self.row=dict(version='2.0.0',enabled=True)
+        with self.assertRaises(RuntimeError):plan.activate(self.tx)
+        self.assertFalse(self.target.exists()); self.assertEqual(self.row['version'],'2.0.0')
     def test_same_owned_version_preserves_native_registration(self):
         first=self.installed(); self.calls=[]
         second=self.plan(first.record); second.activate(Transaction())
@@ -88,7 +96,7 @@ class RecordingModuleLifecycle(unittest.TestCase):
     def test_failed_native_install_retains_a_recoverable_intent(self):
         plan=self.plan(); self.bad_action='install'
         with self.assertRaises(RuntimeError): plan.activate(self.tx)
-        recovered=recording.from_intent(plan.intent,self.run)
+        recovered=recording.from_intent(plan.intent,self.command)
         recovered.before_restore(); self.tx.rollback(); recovered.after_restore()
         self.assertFalse(self.target.exists())
     def test_drift_during_recovery_does_not_unregister_or_remove(self):
@@ -96,11 +104,14 @@ class RecordingModuleLifecycle(unittest.TestCase):
         with self.assertRaises(RuntimeError): plan.before_restore()
         self.assertIsNotNone(self.row); self.assertTrue((self.target/'foreign').exists())
     def test_remove_only_owned_module_and_regenerate_without_restart(self):
-        plan=self.installed(); plan.remove(); recording.apply_native(self.release,self.run)
+        plan=self.installed(); plan.remove(); recording.apply_native(self.release,self.command)
         self.assertFalse(self.target.exists()); self.assertIsNone(self.row); self.assertFalse(self.pending)
         self.assertFalse(any('restart' in call for call in self.calls))
+    def test_remove_from_ready_owned_receipt_unregisters_module(self):
+        first=self.installed(); owned=self.plan(first.record); owned.remove()
+        self.assertIsNone(self.row); self.assertFalse(self.target.exists())
     def test_doctor_rejects_dead_body_only_hooks(self):
-        plan=self.installed(); original=self.run
+        plan=self.installed(); original=self.command
         def dead(argv, **kwargs):
             if argv[:2]==['asterisk','-rx']: return SimpleNamespace(returncode=0,stdout='macro-dialout-one-predial-hook opdesk-record',stderr='')
             return original(argv,**kwargs)
