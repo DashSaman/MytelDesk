@@ -17,6 +17,11 @@ describe('native Issabel recording fallback', () => {
     expect(conf).not.toContain('Set(__REC_STATUS=');
     expect(conf).not.toContain('Set(__CALLFILENAME=');
   });
+  it('checks native callee opt-out only for extension calls, not queue/group/trunk numbers', () => {
+    expect(conf).toContain('Set(OPDESK_POLICY_DST=${IF($["${OPDESK_NATIVE_KIND}"="exten"]?${ARG2}:${IF($["${OPDESK_NATIVE_KIND}"=""]?${EXTTOCALL}:)})})');
+    expect(conf).toContain('${DB(opdesk/rec/ext/${OPDESK_POLICY_DST})}');
+    expect(conf).not.toContain('${DB(opdesk/rec/ext/${EXTTOCALL})}');
+  });
   it('filters every untrusted filename component without changing caller identity', () => {
     for (const [name, value] of [['OPDESK_FILE_CID', '${CALLERID(num)}'], ['OPDESK_FILE_DST', '${OPDESK_DST}'], ['OPDESK_FILE_UID', '${UNIQUEID}']]) {
       expect(conf).toContain(`Set(${name}=\${FILTER(0-9A-Za-z_.+\\-,${value})})`);
