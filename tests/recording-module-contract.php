@@ -5,7 +5,12 @@ if (!$path || !is_file($path)) { fwrite(STDERR, "Missing recording module adapte
 require $path;
 if (!function_exists('myteldesk_recording_module')) { fwrite(STDERR, "Missing recording module API\n"); exit(1); }
 class DB { static function IsError($value) { return $value instanceof Exception; } }
+if (!defined('DB_FETCHMODE_ASSOC')) define('DB_FETCHMODE_ASSOC',2);
 class FixtureDatabase {
+    function getOne($sql) {
+        if ($sql !== "SELECT value FROM admin WHERE variable = 'need_reload'") throw new Exception('Unexpected SQL');
+        return $GLOBALS['fixture_pending'];
+    }
     function getAll($sql, $mode = null) {
         if ($sql !== "SELECT modulename,version,enabled FROM modules WHERE modulename = 'myteldeskrecording'") {
             throw new Exception('Unexpected SQL');
@@ -26,7 +31,7 @@ function check($ok, $label) {
     if (!$ok) { $GLOBALS['failures']++; fwrite(STDERR, 'FAIL '.$label."\n"); }
 }
 function fixture($rows, $result = true) {
-    $GLOBALS['fixture_rows'] = $rows; $GLOBALS['fixture_result'] = $result; $GLOBALS['fixture_calls'] = array();
+    $GLOBALS['fixture_rows'] = $rows; $GLOBALS['fixture_result'] = $result; $GLOBALS['fixture_calls'] = array(); $GLOBALS['fixture_pending'] = 'false';
 }
 $row = array('modulename'=>'myteldeskrecording','version'=>'1.0.0','enabled'=>'1');
 try {
@@ -48,12 +53,19 @@ try {
     fixture(array()); $value = myteldesk_recording_module('uninstall');
     check($value['status'] === true && $value['module'] === null, 'uninstall strict absent readback');
     check($fixture_calls === array(array('uninstall','myteldeskrecording')), 'uninstall only fixed module');
+    foreach (array(false,0,1,null,'true',array()) as $bad) {
+        fixture(array(),$bad); check(myteldesk_recording_module('uninstall')['status'] === false,'uninstall rejects non-true native return');
+    }
     fixture(array($row)); check(myteldesk_recording_module('uninstall')['status'] === false, 'uninstall refuses remaining row');
     foreach (array(array(), array(array('modulename'=>'other','version'=>'1.0.0','enabled'=>'1')), array(array('modulename'=>'myteldeskrecording','version'=>'2.0.0','enabled'=>'1')), array(array('modulename'=>'myteldeskrecording','version'=>'1.0.0','enabled'=>'0'))) as $rows) {
         fixture($rows); check(myteldesk_recording_module('install')['status'] === false, 'install refuses inconsistent poststate');
     }
     foreach (array(new Exception('synthetic metadata failure'), array($row,$row), array(array('modulename'=>'myteldeskrecording','version'=>'1.0.0','enabled'=>'yes'))) as $rows) {
         fixture($rows); check(myteldesk_recording_module('inspect')['status'] === false, 'metadata error/duplicate/invalid state refused');
+    }
+    foreach (array(null,false,0,'','0',new Exception('synthetic pending query failure')) as $bad) {
+        fixture(array($row)); $fixture_pending = $bad;
+        check(myteldesk_recording_module('inspect')['status'] === false,'invalid pending state refused');
     }
     fixture(array($row)); check(myteldesk_recording_module('deleteall')['status'] === false && !$fixture_calls, 'unknown action cannot mutate');
     foreach (array('', 'relative', $root.'/missing', $root."\0tail") as $bad) {
