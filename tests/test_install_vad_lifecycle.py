@@ -57,9 +57,15 @@ class VadInstallLifecycle(unittest.TestCase):
         doctor_patch=mock.patch.object(mod,'doctor_vad',return_value={'status':'ok','engine':'silero'},create=True)
         self.doctor=doctor_patch.start();self.addCleanup(doctor_patch.stop)
         self.recording = SimpleNamespace(record={'schema':1,'fixture':'owned-module'},intent={'fixture':'module-intent'},
-            activate=mock.Mock(),doctor=mock.Mock(),before_restore=mock.Mock(),after_restore=mock.Mock(),remove=mock.Mock())
+            started=False,activate=mock.Mock(),doctor=mock.Mock(),before_restore=mock.Mock(),after_restore=mock.Mock(),remove=mock.Mock(),untouched=mock.Mock())
+        def activate(_transaction, on_begin=None):
+            self.recording.started=True
+            self.recording.intent['started']=True
+            if on_begin: on_begin()
+        self.recording.activate.side_effect=activate
         for name, value in [('prepare_recording_module',mock.Mock(return_value=self.recording)),
                             ('recording_from_intent',mock.Mock(return_value=self.recording)),
+                            ('recording_for_restore',mock.Mock(return_value=self.recording)),
                             ('apply_native_recording',mock.Mock())]:
             patch=mock.patch.object(mod,name,value,create=True); patch.start(); self.addCleanup(patch.stop)
 
@@ -92,6 +98,22 @@ class VadInstallLifecycle(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError,'synthetic activation failure'):mod.install(self.bundle,'https://pbx.example')
         self.recording.before_restore.assert_called_once()
         self.recording.after_restore.assert_called_once()
+
+    def test_recording_prewrite_refusal_never_stops_service_or_applies_pending_changes(self):
+        self.recording.activate.side_effect=RuntimeError('operator pending changes appeared')
+        with self.assertRaisesRegex(RuntimeError,'operator pending changes'):mod.install(self.bundle,'https://pbx.example')
+        mod.apply_native_recording.assert_not_called()
+        self.recording.before_restore.assert_not_called()
+        self.assertNotIn(['systemctl','stop','myteldesk'],self.calls)
+
+    def test_untouched_recording_crash_recovery_does_not_apply_or_stop(self):
+        previous=self.existing(); directory=self.config/'backups/untouched'; directory.mkdir(parents=True)
+        (directory/'previous-state.json').write_text(json.dumps(previous))
+        state=dict(previous,pending_journal=str(directory/'journal.json'),pending_recording=self.recording.intent)
+        self.recording.started=False
+        self.assertEqual(mod.recover_pending(state),previous)
+        mod.apply_native_recording.assert_not_called(); self.recording.before_restore.assert_not_called()
+        self.recording.untouched.assert_called_once(); self.assertEqual(self.calls,[])
 
     def install_with_real_health(self, ready_after):
         clock = [0]

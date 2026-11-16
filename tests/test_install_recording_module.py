@@ -80,6 +80,7 @@ class RecordingModuleLifecycle(unittest.TestCase):
         plan=self.plan(); self.row=dict(version='2.0.0',enabled=True)
         with self.assertRaises(RuntimeError):plan.activate(self.tx)
         self.assertFalse(self.target.exists()); self.assertEqual(self.row['version'],'2.0.0')
+        self.assertFalse(plan.started)
     def test_same_owned_version_preserves_native_registration(self):
         first=self.installed(); self.calls=[]
         second=self.plan(first.record); second.activate(Transaction())
@@ -99,6 +100,20 @@ class RecordingModuleLifecycle(unittest.TestCase):
         recovered=recording.from_intent(plan.intent,self.command)
         recovered.before_restore(); self.tx.rollback(); recovered.after_restore()
         self.assertFalse(self.target.exists())
+    def test_untouched_intent_can_recover_without_applying_new_operator_changes(self):
+        plan=self.plan(); self.pending=True
+        recovered=recording.from_intent(plan.intent,self.command); recovered.untouched()
+        self.assertTrue(self.pending); self.assertFalse(self.target.exists())
+        self.assertFalse(any(call[-1] in ('install','uninstall') for call in self.calls))
+    def test_owned_upgrade_can_restore_previous_bytes_and_native_registration(self):
+        first=self.installed(); before=(self.target/'functions.inc.php').read_bytes()
+        (self.release/'backend/pbx-modules/myteldeskrecording/functions.inc.php').write_bytes(before+b'\n// reviewed upgrade')
+        upgrade=self.plan(first.record); transaction=Transaction(); upgrade.activate(transaction)
+        recording.apply_native(self.release,self.command)
+        restore=recording.for_restore(self.release,self.command,upgrade.record,first.record)
+        restore.before_restore(); transaction.rollback(); restore.after_restore()
+        self.assertEqual((self.target/'functions.inc.php').read_bytes(),before)
+        self.assertEqual(self.row,dict(version='1.0.0',enabled=True))
     def test_drift_during_recovery_does_not_unregister_or_remove(self):
         plan=self.installed(); (self.target/'foreign').write_text('keep')
         with self.assertRaises(RuntimeError): plan.before_restore()
@@ -125,6 +140,17 @@ class RecordingModuleLifecycle(unittest.TestCase):
         original=self.admin/'modules'; original.rmdir(); elsewhere=self.root/'elsewhere'; elsewhere.mkdir(); original.symlink_to(elsewhere)
         with self.assertRaises(RuntimeError):self.plan()
         self.assertEqual(list(elsewhere.iterdir()),[])
+    @unittest.skipIf(os.name!='posix','real symlink fixture needs POSIX')
+    def test_native_ancestor_symlink_after_plan_is_refused_before_writing(self):
+        plan=self.plan(); original=self.admin/'modules'; original.rmdir()
+        elsewhere=self.root/'elsewhere'; elsewhere.mkdir(); original.symlink_to(elsewhere)
+        with self.assertRaises(RuntimeError):plan.activate(self.tx)
+        self.assertEqual(list(elsewhere.iterdir()),[]); self.assertEqual(self.tx.entries,[])
+    def test_changed_native_administration_root_after_plan_is_refused(self):
+        plan=self.plan(); old=self.admin; new=self.root/'other/admin'; (new/'modules').mkdir(parents=True)
+        self.admin=new
+        with self.assertRaises(RuntimeError):plan.activate(self.tx)
+        self.assertFalse((old/'modules/myteldeskrecording').exists()); self.assertEqual(self.tx.entries,[])
 
 
 if __name__ == '__main__': unittest.main()

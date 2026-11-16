@@ -29,6 +29,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from host import detect_platform, read_key_values, render_apache, render_systemd, validate_public_url
 from vad import ensure_vad, doctor_vad
+from recording import prepare as prepare_recording_module, from_intent as recording_from_intent, apply_native as apply_native_recording, for_restore as recording_for_restore
 
 ROOT = Path('/opt/myteldesk')
 CONFIG = Path('/etc/myteldesk')
@@ -245,8 +246,20 @@ def recover_pending(state):
     directory = Path(state['pending_journal']).parent
     journal = directory / 'journal.json'
     previous = json.loads((directory / 'previous-state.json').read_text())
+    recording = recording_from_intent(state['pending_recording'], run) if state.get('pending_recording') else None
+    if recording and not recording.started:
+        if journal.exists() and json.loads(journal.read_text()):
+            raise RuntimeError('Untouched recording intent unexpectedly contains configuration writes; inspect private journal')
+        recording.untouched()
+        save_state(previous)
+        print('Recovered untouched module preflight; existing PBX pending changes were not applied.')
+        return previous
     run(['systemctl', 'stop', 'myteldesk'], check=False)
+    if recording: recording.before_restore()
     restore_entries(json.loads(journal.read_text()) if journal.exists() else [])
+    if recording:
+        recording.after_restore()
+        apply_native_recording(recording.release, run)
     restore_current(state.get('pending_current'))
     save_state(previous)
     run(['systemctl', 'daemon-reload'])
@@ -511,10 +524,12 @@ def install(bundle, public_url=None):
     vad_environment = ensure_vad(release, ROOT / 'runtime/vad', run, fetch_verified, service_user='asterisk')
     if set(vad_environment) != {'VAD_PYTHON', 'VAD_MODEL_PATH', 'VAD_MODEL_SHA256'}:
         raise RuntimeError('VAD provisioner returned incomplete environment configuration')
+    recording = prepare_recording_module(release, run, state.get('recording_module'))
     if state and state.get('version') == manifest['version'] and state.get('tree') == manifest['source_tree'] and state.get('status') == 'ready':
         existing_values = read_key_values(ENV)
         if all(existing_values.get(key) == value for key, value in vad_environment.items()):
             doctor_vad(release, existing_values, run, service_user='asterisk')
+            recording.doctor()
             wait_health(20); verify_app(password, release); verify_proxy(public_url)
             print('Already installed and healthy. URL: ' + public_url)
             return
@@ -560,9 +575,14 @@ def install(bundle, public_url=None):
     was_active = run(['systemctl', 'is-active', '--quiet', 'myteldesk'], check=False).returncode == 0
     previous_current = os.readlink(str(ROOT / 'current')) if (ROOT / 'current').is_symlink() else None
     atomic(transaction.directory / 'previous-state.json', json.dumps(previous))
-    state.update(pending_journal=str(transaction.directory / 'journal.json'), pending_current=previous_current)
+    state.update(pending_journal=str(transaction.directory / 'journal.json'), pending_current=previous_current,
+                 pending_recording=recording.intent)
     save_state(state)
     try:
+        def recording_started():
+            state['pending_recording'] = recording.intent
+            save_state(state)
+        recording.activate(transaction, recording_started)
         values.update(vad_environment)
         if read_key_values(ENV) != values:
             transaction.write(ENV, render_env(values), 0o640, 0, group.gr_gid)
@@ -605,6 +625,8 @@ def install(bundle, public_url=None):
         else: wait_health(timeout=900)
         verify_app(password, release)
         doctor_vad(release, values, run, service_user='asterisk')
+        apply_native_recording(release, run)
+        recording.doctor()
         progress(8, 'Activating Apache configuration')
         run(['systemctl', 'reload', 'httpd'])
         wait_proxy_after_reload(public_url)
@@ -612,17 +634,23 @@ def install(bundle, public_url=None):
         if link.is_symlink(): link.unlink()
         link.symlink_to(release); os.replace(str(link), str(ROOT / 'current'))
         if previous.get('status') == 'ready':
-            state['previous'] = {k: previous[k] for k in ('version', 'tree', 'release', 'node') if k in previous}
+            state['previous'] = {k: previous[k] for k in ('version', 'tree', 'release', 'node', 'recording_module') if k in previous}
         state.update(status='ready', version=manifest['version'], tree=manifest['source_tree'], release=str(release), node=str(node), public_url=public_url,
-                     last_journal=str(transaction.directory / 'journal.json'))
+                     last_journal=str(transaction.directory / 'journal.json'), recording_module=recording.record)
         if not state.get('uninstall_journal'):
             state['uninstall_journal'] = state['last_journal']
         state['owned_hashes'] = {entry['path']: entry['after'] for entry in transaction.entries}
-        state.pop('pending_journal', None); state.pop('pending_current', None)
+        state.pop('pending_journal', None); state.pop('pending_current', None); state.pop('pending_recording', None)
         save_state(state)
     except BaseException:
+        if not recording.started:
+            save_state(previous)
+            raise
         run(['systemctl', 'stop', 'myteldesk'], check=False)
+        recording.before_restore()
         transaction.rollback()
+        recording.after_restore()
+        apply_native_recording(release, run)
         restore_current(previous_current)
         save_state(previous)
         run(['systemctl', 'daemon-reload'], check=False)
@@ -647,6 +675,8 @@ def doctor():
     run(['httpd', '-t'])
     verify_proxy(state['public_url'])
     doctor_vad(Path(state['release']), read_key_values(ENV), run, service_user='asterisk')
+    if not state.get('recording_module'): raise RuntimeError('Native recording generation module ownership is missing; run the reviewed installer upgrade')
+    prepare_recording_module(Path(state['release']),run,state['recording_module']).doctor()
     print('OK: service, local health, AMI, application schema, administrator and CPU voice analysis. ' + state['public_url'])
 
 
@@ -664,8 +694,11 @@ def uninstall():
         if not path.is_file() or path.is_symlink() or digest(path) != state['owned_hashes'].get(str(path)):
             raise RuntimeError('Installed configuration edited outside installer; automatic removal stopped')
         entry['after'] = digest(path)
+    recording = prepare_recording_module(Path(state['release']),run,state['recording_module']) if state.get('recording_module') else None
     run(['systemctl', 'stop', 'myteldesk'], check=False)
+    if recording: recording.remove()
     restore_entries(entries)
+    if recording: apply_native_recording(recording.release,run)
     run(['systemctl', 'disable', 'myteldesk'], check=False)
     run(['systemctl', 'daemon-reload'])
     run(['httpd', '-t']); run(['systemctl', 'reload', 'httpd'])
@@ -684,12 +717,20 @@ def rollback():
         path = Path(item['path'])
         if path.is_symlink() or not path.is_file() or digest(path) != item['after']:
             raise RuntimeError('Configuration edited since upgrade; automatic rollback stopped')
+    recording = recording_for_restore(Path(state['release']),run,state['recording_module'],
+                                       state['previous'].get('recording_module')) if state.get('recording_module') else None
     run(['systemctl', 'stop', 'myteldesk'])
+    if recording: recording.before_restore()
     restore_entries(entries)
+    if recording:
+        recording.after_restore()
+        apply_native_recording(recording.release,run)
     run(['systemctl', 'daemon-reload']); run(['httpd', '-t'])
     run(['systemctl', 'start', 'myteldesk']); wait_health()
     run(['systemctl', 'reload', 'httpd'])
-    state.update(state.pop('previous')); state['last_journal'] = None
+    previous = state.pop('previous')
+    if 'recording_module' not in previous: state.pop('recording_module',None)
+    state.update(previous); state['last_journal'] = None
     state['owned_hashes'] = {item['path']: digest(Path(item['path'])) for item in entries if Path(item['path']).exists()}
     link = ROOT / '.current-next'
     if link.is_symlink(): link.unlink()
