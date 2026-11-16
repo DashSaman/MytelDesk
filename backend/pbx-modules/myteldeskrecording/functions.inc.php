@@ -4,7 +4,7 @@
 // Use its public extensions::splice API; never replace native macros or options.
 
 function myteldeskrecording_guard() {
-    return '$[${DIALPLAN_EXISTS(opdesk-record,s,1)} & "${OPDESK_REC}"="" & "${REC_STATUS}"!="RECORDING" & "${CDR(recordingfile)}"=""]';
+    return '$[${DIALPLAN_EXISTS(opdesk-record,s,1)} & "${OPDESK_REC}"="" & "${REC_STATUS}"!="RECORDING" & "${CDR(recordingfile)}"="" & "${REC_POLICY_MODE}"!="never"]';
 }
 
 /** Pure generator transform. Validate the entire supported shape before mutation. */

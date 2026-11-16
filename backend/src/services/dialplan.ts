@@ -717,7 +717,7 @@ exten => s,1,GosubIf($["\${OPDESK_REC}"=""]?opdesk-record,s,1)
 
 [opdesk-record]
 exten => s,1,NoOp(OpDesk recording start on \${CHANNEL})
- same => n,GotoIf($["\${REC_STATUS}"="RECORDING" | "\${CDR(recordingfile)}"!=""]?native)
+ same => n,GotoIf($["\${REC_STATUS}"="RECORDING" | "\${CDR(recordingfile)}"!="" | "\${REC_POLICY_MODE}"="never"]?native)
  same => n,Set(OPDESK_NATIVE_KIND=\${ARG1})
  same => n,Set(__OPDESK_REC=1)
  same => n,Set(OPDESK_DIR=\${IF($["\${FROM_DID}"!=""]?inbound:\${IF($["\${OPDESK_NATIVE_KIND}"="out" | "\${DIAL_TRUNK}"!=""]?outbound:internal)})})
