@@ -477,11 +477,13 @@ export async function setPbxDefaultCodecs(codecs: string[]): Promise<boolean> {
  * One INSERT ... ON DUPLICATE KEY UPDATE, not Python's UPDATE-then-INSERT-on-zero-rows:
  * with -FOUND_ROWS an UPDATE writing the value a row already holds reports 0, and the
  * fallback INSERT then hits the (id, keyword) primary key. Same end state either way.
+ * Native Issabel requires flags even for a duplicate candidate. Supply it for new
+ * rows only; an existing row's native ordering/visibility flags must stay intact.
  */
 export async function upsertSipKeyword(extension: string, keyword: string, value: string): Promise<boolean> {
   try {
     await execute(
-      'INSERT INTO sip (id, keyword, data) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE data = VALUES(data)',
+      'INSERT INTO sip (id, keyword, data, flags) VALUES (?, ?, ?, 0) ON DUPLICATE KEY UPDATE data = VALUES(data)',
       [extension, keyword, value],
       'pbx',
     );
@@ -621,7 +623,7 @@ export async function setSipKeywordRow(
   insertMissing: boolean,
 ): Promise<number> {
   if (insertMissing && !(await rowExists('sip', 'id = ? AND keyword = ?', [ext, keyword], conn))) {
-    return (await execute('INSERT INTO sip (id, keyword, data) VALUES (?, ?, ?)', [ext, keyword, value], conn)).affectedRows;
+    return (await execute('INSERT INTO sip (id, keyword, data, flags) VALUES (?, ?, ?, 0)', [ext, keyword, value], conn)).affectedRows;
   }
   return (await execute('UPDATE sip SET data = ? WHERE id = ? AND keyword = ?', [value, ext, keyword], conn)).affectedRows;
 }
