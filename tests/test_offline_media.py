@@ -51,7 +51,8 @@ class OfflineMediaTests(unittest.TestCase):
 
     def test_manifest_pin_and_traversal_are_rejected(self):
         self.fetcher()
-        with self.assertRaises(ValueError): install.offline_fetcher(self.root, '0' * 64)
+        with self.assertRaises(ValueError): install.offline_fetcher(
+            self.root, '0' * 64, expected_uid=os.getuid() if hasattr(os, 'getuid') else 0)
         self.value['node'] = '../outside'
         with self.assertRaises(ValueError): self.fetcher()
 
@@ -79,7 +80,8 @@ class OfflineMediaTests(unittest.TestCase):
         with self.assertRaises(FileExistsError): fetch('https://remote/node-v24.22.3-linux-x64.tar.xz', destination, self.pin)
         self.assertEqual(destination.read_bytes(), b'operator')
         (self.root / 'manifest.json').unlink()
-        with self.assertRaises(OSError): install.offline_fetcher(self.root, 'a' * 64)
+        with self.assertRaises(OSError): install.offline_fetcher(
+            self.root, 'a' * 64, expected_uid=os.getuid() if hasattr(os, 'getuid') else 0)
 
     def test_incomplete_offline_install_flags_fail_before_any_native_probe(self):
         with mock.patch.object(install, 'verify_bundle', side_effect=AssertionError('native work forbidden')):
