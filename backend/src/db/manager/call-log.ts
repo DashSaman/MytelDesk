@@ -164,6 +164,24 @@ export interface CelHangup {
   seq: number;
 }
 
+function celHangupPayload(raw: unknown): Pick<CelHangup, 'cause' | 'source' | 'dialstatus'> | null {
+  if (!raw) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(String(raw));
+  } catch {
+    return null;
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  const { hangupcause, hangupsource, dialstatus } = parsed as Record<string, unknown>;
+  const rawCause = typeof hangupcause === 'number' || typeof hangupcause === 'string' ? String(hangupcause) : '';
+  const cause = /^\d+$/.test(rawCause) ? rawCause.replace(/^0+(?=\d)/, '') : '';
+  const source = typeof hangupsource === 'string' ? hangupsource.trim() : '';
+  const status = typeof dialstatus === 'string' ? dialstatus.trim() : '';
+  if ((!cause || cause === '0') && !source && !status) return null;
+  return { cause, source, dialstatus: status };
+}
+
 /**
  * Per-channel hangup facts for a page of calls, as {linkedid: {channame: {...}}}.
  *
@@ -174,40 +192,42 @@ export interface CelHangup {
  * {"hangupcause", "hangupsource", "dialstatus"}, and `hangupsource` names the channel that
  * ended the call, which is the only direct evidence of WHO hung up.
  *
- * Fetched for a whole page in ONE query (per 500 calls) rather than per row: the usable index
- * is linkedid_index, so `linkedid IN (...)` is both the correct access path and what keeps
- * this off the N+1 road. Never fatal: a PBX without CEL (it may be unconfigured on Issabel),
- * or an `extra` that is not JSON, just leaves the status on the CDR disposition.
+ * Choose the supported payload columns once per page, then fetch chunks via linkedid_index.
+ * Older installations may have stored the same payload in the vendor `eventextra` column.
+ * Without usable hangup metadata, the status uses CDR.
  */
 export async function celHangupsByLinkedid(
   linkedids: unknown[] | null | undefined,
 ): Promise<Record<string, Record<string, CelHangup>>> {
   const ids = [...new Set((linkedids || []).filter((x) => truthy(x)).map((x) => pyStr(x)))];
   if (!ids.length) return {};
-  const out: Record<string, Record<string, CelHangup>> = {};
+  const out: Record<string, Record<string, CelHangup>> = Object.create(null);
   try {
+    const schema = await queryOne(
+      "SELECT MAX(COLUMN_NAME = 'extra') AS has_extra, MAX(COLUMN_NAME = 'eventextra') AS has_eventextra " +
+        "FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cel' " +
+        "AND COLUMN_NAME IN ('extra', 'eventextra')",
+      [],
+      'cdr',
+    );
+    const extra = Number(schema?.has_extra) === 1;
+    const eventExtra = Number(schema?.has_eventextra) === 1;
+    if (!extra && !eventExtra) return {};
     for (let start = 0; start < ids.length; start += CEL_CHUNK) {
       const chunk = ids.slice(start, start + CEL_CHUNK);
       const rows = await query(
-        `SELECT id, linkedid, channame, extra, cid_rdnis FROM cel ` +
+        `SELECT id, linkedid, channame, ${extra ? 'extra' : 'NULL AS extra'}, ` +
+          `${eventExtra ? 'eventextra' : 'NULL AS eventextra'}, cid_rdnis FROM cel ` +
           `WHERE eventtype='HANGUP' AND linkedid IN (${placeholders(chunk.length)}) ORDER BY id`,
         chunk,
         'cdr',
       );
       for (const r of rows) {
-        let extra: unknown;
-        try {
-          extra = JSON.parse(truthy(r.extra) ? String(r.extra) : '{}');
-        } catch {
-          continue;
-        }
-        if (extra === null || typeof extra !== 'object' || Array.isArray(extra)) continue;
-        const ex = extra as Record<string, unknown>;
-        if (!(r.linkedid in out)) out[r.linkedid] = {};
-        out[r.linkedid][r.channame] = {
-          cause: 'hangupcause' in ex && ex.hangupcause !== null ? pyStr(ex.hangupcause) : '',
-          source: strOr(ex.hangupsource),
-          dialstatus: strOr(ex.dialstatus),
+        const payload = celHangupPayload(r.extra) ?? celHangupPayload(r.eventextra);
+        if (!payload) continue;
+        const channels = out[r.linkedid] ??= Object.create(null);
+        channels[r.channame] = {
+          ...payload,
           // The channel's redirecting number at hangup: set when the far end forwarded the
           // call (SIP 181/302). Carried for completeness; no verdict reads it today.
           forwarded: String(r.cid_rdnis || '').trim() !== '',

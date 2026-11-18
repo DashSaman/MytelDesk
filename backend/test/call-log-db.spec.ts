@@ -19,6 +19,7 @@ jest.mock('../src/db/manager/pbx', () => ({
 }));
 
 import * as pool from '../src/db/pool';
+import { getLogger } from '../src/core/logger';
 import {
   celHangupsByLinkedid,
   celIvrStepsByLinkedid,
@@ -186,24 +187,93 @@ describe('search', () => {
 
 describe('CEL', () => {
   it('parses HANGUP extra JSON per channel and skips what is not JSON', async () => {
+    q1.mockResolvedValueOnce({ has_extra: 1, has_eventextra: 0 });
     q.mockResolvedValueOnce([
       { id: 4, linkedid: 'L', channame: 'PJSIP/100-0', extra: '{"hangupcause":17,"hangupsource":"PJSIP/100-0","dialstatus":""}', cid_rdnis: '' },
       { id: 6, linkedid: 'L', channame: 'Local/100@from-internal-0;1', extra: '{"hangupcause":0,"hangupsource":"","dialstatus":"BUSY"}', cid_rdnis: '' },
       { id: 9, linkedid: 'L', channame: 'X', extra: 'not json', cid_rdnis: '' },
+      { id: 10, linkedid: 'L', channame: 'PJSIP/100-0', extra: '{}', cid_rdnis: '' },
+      { id: 11, linkedid: 'legacy', channame: 'PJSIP/100-1', extra: null, cid_rdnis: '' },
+      { id: 12, linkedid: 'legacy', channame: 'PJSIP/101-1', extra: '{"hangupcause":"000","hangupsource":"","dialstatus":""}', cid_rdnis: '' },
     ]);
-    expect(await celHangupsByLinkedid(['L', 'L', null])).toEqual({
+    expect(await celHangupsByLinkedid(['L', 'L', null, 'legacy'])).toEqual({
       L: {
         'PJSIP/100-0': { cause: '17', source: 'PJSIP/100-0', dialstatus: '', forwarded: false, seq: 4 },
         'Local/100@from-internal-0;1': { cause: '0', source: '', dialstatus: 'BUSY', forwarded: false, seq: 6 },
       },
     });
-    expect(q.mock.calls[0][1]).toEqual(['L']);
+    expect(q.mock.calls[0][1]).toEqual(['L', 'legacy']);
     expect(q.mock.calls[0][2]).toBe('cdr');
   });
 
   it('never fatal', async () => {
-    q.mockRejectedValueOnce(new Error('no cel table'));
+    q1.mockRejectedValueOnce(new Error('CEL schema unreadable'));
     expect(await celHangupsByLinkedid(['L'])).toEqual({});
+  });
+
+  it('handles older schemas quietly while allowing new CEL details immediately after a migration', async () => {
+    const warning = jest.spyOn(getLogger('db.db_manager'), 'warning');
+    q1.mockResolvedValueOnce({ has_extra: 0, has_eventextra: 0 });
+    try {
+      expect(await celHangupsByLinkedid(['L'])).toEqual({});
+      expect(warning).not.toHaveBeenCalled();
+      expect(q).not.toHaveBeenCalled();
+      q1.mockResolvedValueOnce({ has_extra: 1, has_eventextra: 0 });
+      q.mockResolvedValueOnce([
+        { id: 1, linkedid: 'L', channame: 'PJSIP/100-1', extra: '{"hangupcause":16,"hangupsource":"PJSIP/100-1","dialstatus":"ANSWER"}' },
+      ]);
+      expect(await celHangupsByLinkedid(['L'])).toEqual({
+        L: { 'PJSIP/100-1': { cause: '16', source: 'PJSIP/100-1', dialstatus: 'ANSWER', forwarded: false, seq: 1 } },
+      });
+    } finally {
+      warning.mockRestore();
+    }
+  });
+
+  it('reads vendor eventextra when it contains the Asterisk HANGUP payload', async () => {
+    q1.mockResolvedValueOnce({ has_extra: 0, has_eventextra: 1 });
+    q.mockImplementationOnce(async (sql: string) => {
+      expect(sql).toContain('NULL AS extra, eventextra');
+      return [
+        { id: 1, linkedid: 'L', channame: 'PJSIP/100-1', eventextra: '{"hangupcause":17,"hangupsource":"PJSIP/100-1","dialstatus":"BUSY"}' },
+        { id: 2, linkedid: 'legacy', channame: 'PJSIP/100-2', eventextra: '' },
+      ];
+    });
+    expect(await celHangupsByLinkedid(['L', 'legacy'])).toEqual({
+      L: { 'PJSIP/100-1': { cause: '17', source: 'PJSIP/100-1', dialstatus: 'BUSY', forwarded: false, seq: 1 } },
+    });
+    expect(q).toHaveBeenCalledTimes(1);
+  });
+
+  it('prefers usable extra and retains usable vendor data for calls from before a migration', async () => {
+    q1.mockResolvedValueOnce({ has_extra: 1, has_eventextra: 1 });
+    q.mockResolvedValueOnce([
+      { id: 1, linkedid: 'L', channame: 'PJSIP/100-1', extra: '{"hangupcause":16}', eventextra: '{"hangupcause":17}' },
+      { id: 2, linkedid: 'L', channame: 'PJSIP/100-2', extra: '{}', eventextra: '{"hangupcause":"018"}' },
+      { id: 3, linkedid: 'L', channame: 'PJSIP/100-3', extra: null, eventextra: '{"hangupcause":19}' },
+    ]);
+    expect(await celHangupsByLinkedid(['L'])).toEqual({
+      L: {
+        'PJSIP/100-1': { cause: '16', source: '', dialstatus: '', forwarded: false, seq: 1 },
+        'PJSIP/100-2': { cause: '18', source: '', dialstatus: '', forwarded: false, seq: 2 },
+        'PJSIP/100-3': { cause: '19', source: '', dialstatus: '', forwarded: false, seq: 3 },
+      },
+    });
+    expect(q1.mock.calls[0][0]).toContain("TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cel'");
+    expect(q.mock.calls[0][0]).toContain('id, linkedid, channame, extra, eventextra, cid_rdnis');
+  });
+
+  it('retains warnings for unrelated DB errors', async () => {
+    const warning = jest.spyOn(getLogger('db.db_manager'), 'warning').mockImplementation(() => undefined);
+    const error = new Error("Unknown column 'id' in 'field list'");
+    q1.mockResolvedValueOnce({ has_extra: 1, has_eventextra: 1 });
+    q.mockRejectedValueOnce(error);
+    try {
+      expect(await celHangupsByLinkedid(['L'])).toEqual({});
+      expect(warning).toHaveBeenCalledWith('cel_hangups_by_linkedid: %s', error);
+    } finally {
+      warning.mockRestore();
+    }
   });
 
   it('IVR steps: one per menu entered, with the digit extension as the selection', async () => {
